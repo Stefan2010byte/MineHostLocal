@@ -1,70 +1,77 @@
 """
-MineHost Local — Lokale Minecraft-Server-Verwaltung
-pip install customtkinter psutil requests pillow google-cloud-storage
+MineHost Local — 1:1 Aternos-Layout (lokal)
+pip install customtkinter psutil requests pillow
 pyinstaller --onefile --windowed --name MineHostLocal minehost_local.py
 """
 
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog
-import json, os, sys, hashlib, threading, subprocess, time, shutil, requests
+from tkinter import filedialog, messagebox
+import json, os, hashlib, threading, subprocess, time, shutil, requests, random, string
 import psutil
 from pathlib import Path
 from PIL import Image, ImageDraw
-import socket
 
-# ── Pfade ────────────────────────────────────────────────────────────────────
-APP_DIR    = Path(os.getenv("APPDATA")) / "MineHostLocal"
-USERS_DB   = APP_DIR / "users.json"
-SERVERS_DIR= APP_DIR / "servers"
-ACCESS_DB  = APP_DIR / "access.json"
+# ── Pfade ─────────────────────────────────────────────────────────────────────
+APP_DIR     = Path(os.getenv("APPDATA")) / "MineHostLocal"
+USERS_DB    = APP_DIR / "users.json"
+SERVERS_DIR = APP_DIR / "servers"
+ACCESS_DB   = APP_DIR / "access.json"
 APP_DIR.mkdir(parents=True, exist_ok=True)
 SERVERS_DIR.mkdir(exist_ok=True)
 
-# ── Theme ─────────────────────────────────────────────────────────────────────
-BG_DARK    = "#0f1117"
-BG_PANEL   = "#1a1d27"
-BG_CARD    = "#21263a"
-ACCENT     = "#00c853"
-ACCENT_RED = "#f44336"
-ACCENT_BLUE= "#2979ff"
-ACCENT_YEL = "#ffd600"
-TEXT_PRI   = "#e8eaf6"
-TEXT_SEC   = "#7986cb"
-NAV_W      = 210
+# ── Aternos-Farben ────────────────────────────────────────────────────────────
+BG          = "#111317"
+SIDEBAR_BG  = "#191c22"
+CARD        = "#22262f"
+CARD2       = "#1a1d24"
+GREEN       = "#2ecc40"
+GREEN_HOV   = "#27b038"
+RED         = "#e74c3c"
+RED_HOV     = "#c0392b"
+BLUE        = "#3498db"
+TEXT        = "#ffffff"
+TEXT_MUTED  = "#8892a4"
+BORDER      = "#2a2d36"
+SIDEBAR_W   = 200
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
-# ── SERVER-TYPEN ──────────────────────────────────────────────────────────────
-SERVER_TYPES = {
-    "Vanilla":      {"icon": "✔", "tag": "vanilla",  "color": ACCENT},
-    "Snapshot":     {"icon": "📸","tag": "vanilla",  "color": "#80cbc4"},
-    "Paper/Bukkit": {"icon": "🧩","tag": "paper",    "color": ACCENT,    "plugins": True},
-    "Spigot/Bukkit":{"icon": "🧩","tag": "spigot",   "color": ACCENT,    "plugins": True},
-    "Purpur/Bukkit":{"icon": "🧩","tag": "purpur",   "color": "#ce93d8", "plugins": True},
-    "Folia":        {"icon": "🧩","tag": "folia",    "color": "#80deea", "plugins": True},
-    "Fabric":       {"icon": "⚙", "tag": "fabric",   "color": "#ffcc80", "mods": True},
-    "Quilt":        {"icon": "⚙", "tag": "quilt",    "color": "#b39ddb", "mods": True},
-    "NeoForge":     {"icon": "⚙", "tag": "neoforge", "color": "#ef9a9a", "mods": True},
-    "Forge":        {"icon": "⚙", "tag": "forge",    "color": "#ffab91", "mods": True},
-    "Modpacks":     {"icon": "⚙", "tag": "modpack",  "color": "#a5d6a7", "mods": True},
-    "Arclight":     {"icon": "⚙", "tag": "arclight", "color": "#80cbc4", "plugins": True, "mods": True},
-}
+MC_VERSIONS = ["1.21.4","1.21.1","1.20.4","1.20.1","1.19.4","1.18.2","1.17.1","1.16.5","1.12.2","1.8.9"]
 
-VANILLA_VERSIONS = {
+VANILLA_JARS = {
     "1.21.4": "https://piston-data.mojang.com/v1/objects/4707d00eb834b446575d89a61a11b5d548d8c001/server.jar",
     "1.21.1": "https://piston-data.mojang.com/v1/objects/59353fb40c36d304f2035d51e7d6e6baa98dc05c/server.jar",
     "1.20.4": "https://piston-data.mojang.com/v1/objects/8dd1a28015f51b1803213892b50b7b4fc76e594d/server.jar",
     "1.20.1": "https://piston-data.mojang.com/v1/objects/84194a2f286ef7c14ed7ce0090dba59902951553/server.jar",
     "1.19.4": "https://piston-data.mojang.com/v1/objects/8f3112a1049751cc472ec13e397eade5336ca7ae/server.jar",
+    "1.18.2": "https://piston-data.mojang.com/v1/objects/c8f83c5655308435b3dcf03c06d9fe8740a77469/server.jar",
+    "1.16.5": "https://piston-data.mojang.com/v1/objects/1b557e7b033b583cd9f66746b7a9ab1ec1673eca/server.jar",
+    "1.12.2": "https://piston-data.mojang.com/v1/objects/886945bfb2b978778c3a0288fd7fab09d315b25f/server.jar",
+    "1.8.9":  "https://piston-data.mojang.com/v1/objects/b58b2ceb36e01251b9a9e3d916fdca8b8e9620b2/server.jar",
+}
+
+SERVER_TYPES = {
+    "Vanilla":       {"tag":"vanilla",  "icon":"✔",  "color":GREEN,    "desc":"Offizieller Mojang Server"},
+    "Snapshot":      {"tag":"vanilla",  "icon":"📸", "color":"#1abc9c","desc":"Neueste Snapshot-Version"},
+    "Paper/Bukkit":  {"tag":"paper",    "icon":"🧩", "color":GREEN,    "desc":"Für Plugins (empfohlen)"},
+    "Spigot/Bukkit": {"tag":"spigot",   "icon":"🧩", "color":GREEN,    "desc":"Für Plugins"},
+    "Purpur/Bukkit": {"tag":"purpur",   "icon":"🧩", "color":"#9b59b6","desc":"Für Plugins (mehr Features)"},
+    "Folia":         {"tag":"folia",    "icon":"🧩", "color":"#1abc9c","desc":"Multithreaded Paper"},
+    "Fabric":        {"tag":"fabric",   "icon":"⚙",  "color":"#f39c12","desc":"Für Mods"},
+    "Quilt":         {"tag":"quilt",    "icon":"⚙",  "color":"#8e44ad","desc":"Für Mods"},
+    "NeoForge":      {"tag":"neoforge", "icon":"⚙",  "color":RED,      "desc":"Für Mods"},
+    "Forge":         {"tag":"forge",    "icon":"⚙",  "color":"#e67e22","desc":"Für Mods (klassisch)"},
+    "Modpacks":      {"tag":"modpack",  "icon":"⚙",  "color":"#27ae60","desc":"Modpack-Server"},
+    "Arclight":      {"tag":"arclight", "icon":"⚙",  "color":"#1abc9c","desc":"Plugins + Mods"},
 }
 
 PERMISSIONS = [
     ("server_startstop",  "Server starten / stoppen"),
     ("options",           "Optionen bearbeiten"),
     ("console",           "Konsole einsehen"),
-    ("console_cmd",       "Befehle in Konsole senden"),
+    ("console_cmd",       "Befehle senden"),
     ("players_op",        "OP-Rechte vergeben"),
     ("players_whitelist", "Whitelist verwalten"),
     ("players_ban",       "Spieler bannen"),
@@ -74,64 +81,59 @@ PERMISSIONS = [
     ("files",             "Dateien/Mods verwalten"),
 ]
 
-# ── Hilfsfunktionen ──────────────────────────────────────────────────────────
-def hash_pw(pw):
-    return hashlib.sha256(pw.encode()).hexdigest()
+# ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+def hash_pw(pw):     return hashlib.sha256(pw.encode()).hexdigest()
+def rnd_suffix(n=4): return "".join(random.choices(string.ascii_uppercase+string.digits, k=n))
 
-def load_json(path, default):
-    if Path(path).exists():
-        try: return json.loads(Path(path).read_text())
-        except: pass
-    return default
+def load_json(p, d=None):
+    try:
+        if Path(p).exists(): return json.loads(Path(p).read_text(encoding="utf-8"))
+    except: pass
+    return d if d is not None else {}
 
-def save_json(path, data):
-    Path(path).write_text(json.dumps(data, indent=2))
+def save_json(p, data):
+    Path(p).parent.mkdir(parents=True, exist_ok=True)
+    Path(p).write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
-def load_users(): return load_json(USERS_DB, {})
+def load_users():  return load_json(USERS_DB, {})
 def save_users(d): save_json(USERS_DB, d)
-def load_access(): return load_json(ACCESS_DB, {})
-def save_access(d): save_json(ACCESS_DB, d)
 
 def load_server_cfg(name):
     return load_json(SERVERS_DIR / name / "minehost.json", {})
 
 def save_server_cfg(name, cfg):
     p = SERVERS_DIR / name
-    p.mkdir(exist_ok=True)
+    p.mkdir(parents=True, exist_ok=True)
     save_json(p / "minehost.json", cfg)
+    print(f"[SAVE] {p / 'minehost.json'} => {cfg}")   # debug
 
 def list_servers():
-    return [d.name for d in SERVERS_DIR.iterdir() if d.is_dir() and (SERVERS_DIR/d.name/"minehost.json").exists()]
+    result = []
+    if not SERVERS_DIR.exists(): return result
+    for d in SERVERS_DIR.iterdir():
+        if d.is_dir() and (d / "minehost.json").exists():
+            result.append(d.name)
+    return result
 
-def get_local_ip():
+def get_paper_url(mc_ver):
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except: return "127.0.0.1"
-
-def get_paper_url(mc_version):
-    try:
-        r = requests.get(f"https://api.papermc.io/v2/projects/paper/versions/{mc_version}/builds", timeout=10)
+        r = requests.get(f"https://api.papermc.io/v2/projects/paper/versions/{mc_ver}/builds", timeout=10)
         builds = r.json().get("builds", [])
         if not builds: return None
-        latest = builds[-1]
-        jar_name = latest["downloads"]["application"]["name"]
-        return f"https://api.papermc.io/v2/projects/paper/versions/{mc_version}/builds/{latest['build']}/downloads/{jar_name}"
+        b = builds[-1]
+        return f"https://api.papermc.io/v2/projects/paper/versions/{mc_ver}/builds/{b['build']}/downloads/{b['downloads']['application']['name']}"
     except: return None
 
-def make_logo(size=48):
-    img = Image.new("RGBA", (size, size), (0,0,0,0))
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle([2,2,size-2,size-2], radius=12, fill="#21263a")
-    b = size//3
-    cols = ["#5d4037","#4caf50","#388e3c","#8d6e63","#4caf50","#2e7d32","#6d4c41","#33691e","#5d4037"]
-    for i,c in enumerate(cols):
+def make_logo(size=40):
+    img = Image.new("RGBA", (size,size), (0,0,0,0))
+    d   = ImageDraw.Draw(img)
+    d.rounded_rectangle([0,0,size,size], radius=8, fill="#22262f")
+    b   = size//3
+    cs  = ["#5d4037","#4caf50","#388e3c","#8d6e63","#4caf50","#2e7d32","#6d4c41","#33691e","#5d4037"]
+    for i,c in enumerate(cs):
         r,col = divmod(i,3)
-        x0,y0 = 8+col*b, 8+r*b
-        d.rectangle([x0,y0,x0+b-2,y0+b-2], fill=c)
+        x0,y0 = 4+col*(b-1), 4+r*(b-1)
+        d.rectangle([x0,y0,x0+b-3,y0+b-3], fill=c)
     return ctk.CTkImage(light_image=img, dark_image=img, size=(size,size))
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -141,57 +143,57 @@ class LoginWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("MineHost Local")
-        self.geometry("440x580")
-        self.resizable(False, False)
-        self.configure(fg_color=BG_DARK)
+        self.geometry("420x560")
+        self.resizable(False,False)
+        self.configure(fg_color=BG)
         self._mode = "login"
         self._build()
 
     def _build(self):
-        logo = make_logo(72)
-        ctk.CTkLabel(self, image=logo, text="").pack(pady=(36,6))
-        ctk.CTkLabel(self, text="MineHost Local", font=ctk.CTkFont("Segoe UI",26,"bold"),
-                     text_color=ACCENT).pack()
+        logo = make_logo(64)
+        ctk.CTkLabel(self, image=logo, text="").pack(pady=(40,6))
+        ctk.CTkLabel(self, text="MineHost Local",
+                     font=ctk.CTkFont("Segoe UI",24,"bold"), text_color=GREEN).pack()
         ctk.CTkLabel(self, text="Dein lokaler Minecraft-Manager",
-                     font=ctk.CTkFont("Segoe UI",12), text_color=TEXT_SEC).pack(pady=(2,20))
+                     font=ctk.CTkFont("Segoe UI",12), text_color=TEXT_MUTED).pack(pady=(2,24))
 
-        f = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=16)
-        f.pack(padx=36, fill="x")
+        box = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=12)
+        box.pack(padx=36, fill="x")
 
-        self.tab = ctk.CTkSegmentedButton(f, values=["Login","Registrieren"],
-                                          command=self._switch,
-                                          fg_color=BG_CARD, selected_color=ACCENT,
-                                          selected_hover_color="#00a846",
-                                          unselected_color=BG_CARD,
-                                          font=ctk.CTkFont("Segoe UI",13,"bold"))
-        self.tab.set("Login")
-        self.tab.pack(padx=18, pady=(18,14), fill="x")
+        self.tabs = ctk.CTkSegmentedButton(box, values=["Login","Registrieren"],
+                                            command=self._switch,
+                                            fg_color=CARD, selected_color=GREEN,
+                                            selected_hover_color=GREEN_HOV,
+                                            unselected_color=CARD,
+                                            font=ctk.CTkFont("Segoe UI",13,"bold"))
+        self.tabs.set("Login")
+        self.tabs.pack(padx=18, pady=(18,14), fill="x")
 
-        def row(label, ph, show=""):
-            ctk.CTkLabel(f, text=label, anchor="w", text_color=TEXT_SEC,
-                         font=ctk.CTkFont("Segoe UI",12)).pack(padx=18, fill="x")
-            e = ctk.CTkEntry(f, placeholder_text=ph, show=show,
-                              fg_color=BG_CARD, border_color=ACCENT_BLUE,
-                              font=ctk.CTkFont("Segoe UI",13))
+        def field(parent, label, ph, show=""):
+            ctk.CTkLabel(parent, text=label, anchor="w", text_color=TEXT_MUTED,
+                         font=ctk.CTkFont("Segoe UI",11)).pack(padx=18, fill="x")
+            e = ctk.CTkEntry(parent, placeholder_text=ph, show=show,
+                              fg_color=CARD, border_color=BORDER,
+                              text_color=TEXT, font=ctk.CTkFont("Segoe UI",13))
             e.pack(padx=18, pady=(2,10), fill="x")
             return e
 
-        self.e_user  = row("Benutzername", "z.B. Steve")
-        self.e_pw    = row("Passwort", "••••••••", "•")
-        self.e_email = ctk.CTkEntry(f, placeholder_text="E-Mail (optional)",
-                                     fg_color=BG_CARD, border_color=ACCENT_BLUE,
-                                     font=ctk.CTkFont("Segoe UI",13))
+        self.e_user  = field(box, "Benutzername", "z.B. Steve")
+        self.e_pw    = field(box, "Passwort", "••••••••", "•")
+        self.e_email = ctk.CTkEntry(box, placeholder_text="E-Mail (optional)",
+                                     fg_color=CARD, border_color=BORDER,
+                                     text_color=TEXT, font=ctk.CTkFont("Segoe UI",13))
 
-        self.btn = ctk.CTkButton(f, text="Einloggen", fg_color=ACCENT,
-                                  hover_color="#00a846", text_color="#000",
+        self.btn = ctk.CTkButton(box, text="Einloggen", fg_color=GREEN,
+                                  hover_color=GREEN_HOV, text_color="#000",
                                   font=ctk.CTkFont("Segoe UI",14,"bold"),
-                                  height=44, corner_radius=10, command=self._submit)
+                                  height=44, corner_radius=8, command=self._submit)
         self.btn.pack(padx=18, pady=(4,18), fill="x")
 
-        self.err = ctk.CTkLabel(self, text="", text_color=ACCENT_RED,
-                                 font=ctk.CTkFont("Segoe UI",12))
-        self.err.pack()
-        self.bind("<Return>", lambda e: self._submit())
+        self.err_lbl = ctk.CTkLabel(self, text="", text_color=RED,
+                                     font=ctk.CTkFont("Segoe UI",12))
+        self.err_lbl.pack()
+        self.bind("<Return>", lambda _: self._submit())
 
     def _switch(self, val):
         self._mode = "register" if val == "Registrieren" else "login"
@@ -205,16 +207,16 @@ class LoginWindow(ctk.CTk):
     def _submit(self):
         user, pw = self.e_user.get().strip(), self.e_pw.get()
         if not user or not pw:
-            self.err.configure(text="Bitte alle Felder ausfüllen.")
+            self.err_lbl.configure(text="Bitte alle Felder ausfüllen.")
             return
         users = load_users()
         if self._mode == "login":
             if user not in users or users[user]["pw"] != hash_pw(pw):
-                self.err.configure(text="Falscher Benutzername oder Passwort.")
+                self.err_lbl.configure(text="Falscher Benutzername oder Passwort.")
                 return
         else:
             if user in users:
-                self.err.configure(text="Benutzername bereits vergeben.")
+                self.err_lbl.configure(text="Benutzername bereits vergeben.")
                 return
             users[user] = {"pw": hash_pw(pw), "email": self.e_email.get().strip(), "role": "admin"}
             save_users(users)
@@ -222,431 +224,543 @@ class LoginWindow(ctk.CTk):
         MainApp(username=user).mainloop()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SETUP-ASSISTENT
+# SERVER ERSTELLEN (Aternos-Stil)
 # ══════════════════════════════════════════════════════════════════════════════
-class SetupWizard(ctk.CTkToplevel):
-    MC_VERSIONS = ["1.21.4","1.21.1","1.20.4","1.20.1","1.19.4"]
-
+class CreateServerWindow(ctk.CTkToplevel):
     def __init__(self, master, on_done):
         super().__init__(master)
-        self.title("Neuen Server erstellen")
-        self.geometry("680x780")
+        self.on_done  = on_done
+        self._sel_type = "Vanilla"
+        self.title("Server erstellen")
+        self.geometry("700x760")
         self.resizable(False, False)
-        self.configure(fg_color=BG_DARK)
-        self.on_done = on_done
-        self._selected_type = "Vanilla"
-        self._build()
+        self.configure(fg_color=BG)
         self.grab_set()
+        self._build()
 
     def _build(self):
-        ctk.CTkLabel(self, text="Server erstellen",
-                     font=ctk.CTkFont("Segoe UI",22,"bold"), text_color=ACCENT).pack(pady=(24,2))
-        ctk.CTkLabel(self, text="Wähle einen Server-Typ und konfiguriere deinen Server.",
-                     text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",12)).pack(pady=(0,16))
+        # Header
+        hdr = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=0, height=60)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        ctk.CTkLabel(hdr, text="Erstelle einen Server",
+                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=GREEN).pack(side="left", padx=20, pady=16)
 
-        # Server-Typ Auswahl (Grid wie Aternos)
-        type_frame = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=12)
-        type_frame.pack(padx=24, fill="x", pady=(0,12))
-        ctk.CTkLabel(type_frame, text="Java Edition", text_color=ACCENT,
-                     font=ctk.CTkFont("Segoe UI",12,"bold")).pack(padx=16, pady=(12,6), anchor="w")
+        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=0, pady=0)
 
-        grid = ctk.CTkFrame(type_frame, fg_color="transparent")
-        grid.pack(padx=12, pady=(0,12), fill="x")
+        # Server-Name + Adresse
+        sec1 = self._section(scroll, "Server-Details")
+        self._field_lbl(sec1, "Server-Name")
+        self.e_name = self._entry(sec1, "Mein Server")
+
+        self._field_lbl(sec1, "Server-Adresse  (wird automatisch generiert)")
+        addr_row = ctk.CTkFrame(sec1, fg_color="transparent")
+        addr_row.pack(padx=18, pady=(2,12), fill="x")
+        addr_row.grid_columnconfigure(0, weight=1)
+        self.e_addr = ctk.CTkEntry(addr_row, fg_color=CARD, border_color=BORDER,
+                                    text_color=TEXT, font=ctk.CTkFont("Segoe UI",13))
+        self.e_addr.grid(row=0, column=0, sticky="ew", padx=(0,8))
+        ctk.CTkLabel(addr_row, text=".minehost.local",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",12)
+                     ).grid(row=0, column=1)
+        ctk.CTkLabel(sec1, text="Port", anchor="w", text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11)).pack(padx=18, fill="x")
+        self.e_port = self._entry(sec1, "25565", default="25565")
+        ctk.CTkLabel(sec1, text="Max. Spieler", anchor="w", text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11)).pack(padx=18, fill="x")
+        self.e_players = self._entry(sec1, "20", default="20")
+        ctk.CTkLabel(sec1, text="Beschreibung (MotD)", anchor="w", text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11)).pack(padx=18, fill="x")
+        self.e_motd = self._entry(sec1, "Ein epischer Minecraft Server!")
+
+        # Server-Typ
+        sec2 = self._section(scroll, "Java Edition")
+        grid = ctk.CTkFrame(sec2, fg_color="transparent")
+        grid.pack(padx=14, pady=(4,14), fill="x")
         self._type_btns = {}
-        types = list(SERVER_TYPES.keys())
         cols = 3
-        for i, name in enumerate(types):
-            info = SERVER_TYPES[name]
+        for i, (name, info) in enumerate(SERVER_TYPES.items()):
             r, c = divmod(i, cols)
-            btn = ctk.CTkButton(grid, text=f"{info['icon']}  {name}",
-                                 fg_color=BG_CARD, hover_color=BG_DARK,
-                                 text_color=TEXT_PRI, font=ctk.CTkFont("Segoe UI",12),
-                                 height=52, corner_radius=8,
-                                 command=lambda n=name: self._pick_type(n))
-            btn.grid(row=r, column=c, padx=4, pady=4, sticky="ew")
+            btn = ctk.CTkButton(grid,
+                text=f"{info['icon']}  {name}",
+                height=56, corner_radius=8,
+                fg_color=CARD, hover_color=info["color"],
+                text_color=TEXT, font=ctk.CTkFont("Segoe UI",12),
+                command=lambda n=name: self._pick(n))
+            btn.grid(row=r, column=c, padx=3, pady=3, sticky="ew")
             grid.grid_columnconfigure(c, weight=1)
             self._type_btns[name] = btn
-        self._pick_type("Vanilla")
 
-        # Konfiguration
-        f = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=12)
-        f.pack(padx=24, fill="x", pady=(0,12))
+            # Tooltip-ähnliches Label darunter
+            sub = ctk.CTkLabel(grid, text=info["desc"], text_color=TEXT_MUTED,
+                                font=ctk.CTkFont("Segoe UI",9))
+            sub.grid(row=r*2+1 if False else r+20, column=c)   # skip subtitles for clean grid
+        self._pick("Vanilla")
 
-        def row(label, ph, default=""):
-            ctk.CTkLabel(f, text=label, anchor="w", text_color=TEXT_SEC,
-                         font=ctk.CTkFont("Segoe UI",12)).pack(padx=16, fill="x", pady=(10,0))
-            e = ctk.CTkEntry(f, placeholder_text=ph, fg_color=BG_CARD,
-                              border_color=ACCENT_BLUE, font=ctk.CTkFont("Segoe UI",13))
-            if default: e.insert(0, default)
-            e.pack(padx=16, pady=(2,0), fill="x")
-            return e
+        # Version
+        sec3 = self._section(scroll, "Version")
+        self.ver_var = ctk.StringVar(value=MC_VERSIONS[0])
+        om = ctk.CTkOptionMenu(sec3, variable=self.ver_var, values=MC_VERSIONS,
+                                fg_color=CARD, button_color=BLUE,
+                                font=ctk.CTkFont("Segoe UI",13), text_color=TEXT,
+                                dropdown_fg_color=CARD, dropdown_text_color=TEXT)
+        om.pack(padx=18, pady=(4,16), fill="x")
 
-        self.e_name    = row("Server-Name", "Mein Server")
-        self.e_motd    = row("Beschreibung (MotD)", "Ein epischer Minecraft Server!")
-        self.e_address = row("Server-Adresse (Subdomain/IP)", get_local_ip(), get_local_ip())
-        self.e_port    = row("Port", "25565", "25565")
-        self.e_players = row("Max. Spieler", "20", "20")
-
-        ctk.CTkLabel(f, text="Minecraft-Version", anchor="w", text_color=TEXT_SEC,
-                     font=ctk.CTkFont("Segoe UI",12)).pack(padx=16, fill="x", pady=(10,0))
-        self.ver_var = ctk.StringVar(value=self.MC_VERSIONS[0])
-        ctk.CTkOptionMenu(f, variable=self.ver_var, values=self.MC_VERSIONS,
-                           fg_color=BG_CARD, button_color=ACCENT_BLUE,
-                           font=ctk.CTkFont("Segoe UI",13)).pack(padx=16, pady=(2,16), fill="x")
+        # Region (Kosmetik)
+        sec4 = self._section(scroll, "Region")
+        rg = ctk.CTkFrame(sec4, fg_color="transparent")
+        rg.pack(padx=18, pady=(4,14))
+        self._reg = ctk.StringVar(value="Europa")
+        for label in ["Europa","Nordamerika"]:
+            ctk.CTkRadioButton(rg, text=label, variable=self._reg, value=label,
+                                fg_color=GREEN, hover_color=GREEN_HOV,
+                                text_color=TEXT, font=ctk.CTkFont("Segoe UI",13)
+                                ).pack(side="left", padx=16)
 
         # Fortschritt
-        pf = ctk.CTkFrame(self, fg_color="transparent")
-        pf.pack(padx=24, fill="x")
-        self.progress = ctk.CTkProgressBar(pf, fg_color=BG_CARD, progress_color=ACCENT)
-        self.progress.set(0)
-        self.progress.pack(fill="x")
-        self.lbl_status = ctk.CTkLabel(pf, text="", text_color=TEXT_SEC,
-                                        font=ctk.CTkFont("Segoe UI",11))
-        self.lbl_status.pack(pady=(4,0))
+        self.prog_frame = ctk.CTkFrame(scroll, fg_color=SIDEBAR_BG, corner_radius=10)
+        self.prog_frame.pack(padx=20, pady=(4,8), fill="x")
+        self.prog_bar = ctk.CTkProgressBar(self.prog_frame, fg_color=CARD, progress_color=GREEN)
+        self.prog_bar.set(0)
+        self.prog_bar.pack(padx=16, pady=(14,4), fill="x")
+        self.prog_lbl = ctk.CTkLabel(self.prog_frame, text="Bereit.",
+                                      text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",11))
+        self.prog_lbl.pack(padx=16, pady=(2,14))
 
-        ctk.CTkButton(self, text="Server erstellen & JAR herunterladen",
-                      fg_color=ACCENT, hover_color="#00a846", text_color="#000",
-                      font=ctk.CTkFont("Segoe UI",14,"bold"), height=48, corner_radius=10,
-                      command=self._create).pack(padx=24, pady=16, fill="x")
+        # Create Button
+        ctk.CTkButton(scroll, text="Server erstellen",
+                      fg_color=GREEN, hover_color=GREEN_HOV, text_color="#000",
+                      font=ctk.CTkFont("Segoe UI",15,"bold"), height=52, corner_radius=8,
+                      command=self._create).pack(padx=20, pady=(4,24), fill="x")
 
-    def _pick_type(self, name):
-        self._selected_type = name
+        # Auto-fill Adresse wenn Name eingegeben
+        self.e_name.bind("<KeyRelease>", self._auto_addr)
+
+    def _section(self, parent, title):
+        ctk.CTkLabel(parent, text=title, text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11,"bold")).pack(padx=20, pady=(16,4), anchor="w")
+        f = ctk.CTkFrame(parent, fg_color=SIDEBAR_BG, corner_radius=10)
+        f.pack(padx=20, pady=(0,4), fill="x")
+        return f
+
+    def _field_lbl(self, parent, text):
+        ctk.CTkLabel(parent, text=text, anchor="w", text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11)).pack(padx=18, pady=(12,0), fill="x")
+
+    def _entry(self, parent, ph, default=""):
+        e = ctk.CTkEntry(parent, placeholder_text=ph, fg_color=CARD, border_color=BORDER,
+                          text_color=TEXT, font=ctk.CTkFont("Segoe UI",13))
+        if default: e.insert(0, default)
+        e.pack(padx=18, pady=(2,10), fill="x")
+        return e
+
+    def _auto_addr(self, _=None):
+        name = self.e_name.get().strip().replace(" ","-")
+        if name:
+            self.e_addr.delete(0,"end")
+            self.e_addr.insert(0, f"{name}-{rnd_suffix(4)}")
+
+    def _pick(self, name):
+        self._sel_type = name
         for n, btn in self._type_btns.items():
             info = SERVER_TYPES[n]
             if n == name:
                 btn.configure(fg_color=info["color"], text_color="#000")
             else:
-                btn.configure(fg_color=BG_CARD, text_color=TEXT_PRI)
+                btn.configure(fg_color=CARD, text_color=TEXT)
 
     def _create(self):
-        name     = self.e_name.get().strip() or "Mein_Server"
-        motd     = self.e_motd.get().strip() or "A Minecraft Server"
-        address  = self.e_address.get().strip() or get_local_ip()
+        raw_name = self.e_name.get().strip()
+        if not raw_name:
+            self.prog_lbl.configure(text="Bitte einen Server-Namen eingeben!", text_color=RED)
+            return
+
+        addr     = self.e_addr.get().strip() or f"{raw_name.replace(' ','-')}-{rnd_suffix(4)}"
         port     = self.e_port.get().strip() or "25565"
         players  = self.e_players.get().strip() or "20"
+        motd     = self.e_motd.get().strip() or "A Minecraft Server"
         mc_ver   = self.ver_var.get()
-        srv_type = SERVER_TYPES[self._selected_type]["tag"]
-        safe     = name.replace(" ","_")
-        srv_dir  = SERVERS_DIR / safe
-        srv_dir.mkdir(exist_ok=True)
+        srv_type = self._sel_type
+        tag      = SERVER_TYPES[srv_type]["tag"]
 
-        def download():
-            self.lbl_status.configure(text="Ermittle Download-URL…")
-            self.progress.set(0.05)
+        # Ordner-Name: sicher
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in raw_name)
+        if not safe: safe = "Server"
 
-            if srv_type == "paper" or self._selected_type in ("Paper/Bukkit","Folia","Purpur/Bukkit","Spigot/Bukkit","Arclight"):
-                url = get_paper_url(mc_ver) or VANILLA_VERSIONS.get(mc_ver)
+        srv_dir = SERVERS_DIR / safe
+        srv_dir.mkdir(parents=True, exist_ok=True)
+
+        def run():
+            self.prog_lbl.configure(text="Ermittle Download-URL…", text_color=TEXT_MUTED)
+            self.prog_bar.set(0.05)
+
+            if tag in ("paper","spigot","folia","purpur","arclight"):
+                url = get_paper_url(mc_ver) or VANILLA_JARS.get(mc_ver)
             else:
-                url = VANILLA_VERSIONS.get(mc_ver)
+                url = VANILLA_JARS.get(mc_ver)
 
             if not url:
-                self.lbl_status.configure(text="Keine JAR-URL gefunden.")
+                self.prog_lbl.configure(text=f"Keine JAR für {mc_ver} gefunden.", text_color=RED)
                 return
 
-            self.lbl_status.configure(text=f"Lade server.jar herunter…")
+            self.prog_lbl.configure(text="Lade server.jar herunter…")
             try:
-                r = requests.get(url, stream=True, timeout=90)
-                total = int(r.headers.get("content-length", 0))
+                r     = requests.get(url, stream=True, timeout=120)
+                total = int(r.headers.get("content-length",0))
                 done  = 0
                 with open(srv_dir/"server.jar","wb") as fh:
                     for chunk in r.iter_content(8192):
                         fh.write(chunk)
                         done += len(chunk)
-                        if total: self.progress.set(0.1 + 0.85*(done/total))
+                        if total: self.prog_bar.set(0.1 + 0.85*(done/total))
             except Exception as e:
-                self.lbl_status.configure(text=f"Fehler: {e}")
+                self.prog_lbl.configure(text=f"Download-Fehler: {e}", text_color=RED)
                 return
 
-            (srv_dir/"eula.txt").write_text("eula=true\n")
+            # eula.txt
+            (srv_dir/"eula.txt").write_text("eula=true\n", encoding="utf-8")
+
+            # server.properties
             (srv_dir/"server.properties").write_text(
                 f"server-port={port}\nmax-players={players}\nmotd={motd}\n"
-                "online-mode=true\ndifficulty=normal\npvp=true\nwhite-list=false\n"
-                "gamemode=survival\nlevel-name=world\nview-distance=10\n"
-                "enable-command-block=false\nspawn-protection=16\n"
+                "online-mode=true\ndifficulty=normal\npvp=true\n"
+                "white-list=false\ngamemode=survival\nlevel-name=world\n"
+                "view-distance=10\nenable-command-block=false\nspawn-protection=16\n"
+                "allow-flight=false\nforce-gamemode=false\nplayer-idle-timeout=0\n",
+                encoding="utf-8"
             )
 
-            cfg = {"name":name,"mc_version":mc_ver,"type":srv_type,
-                   "server_type_label":self._selected_type,
-                   "port":port,"address":address,"max_players":players,
-                   "motd":motd,"dir":str(srv_dir)}
+            # Config speichern
+            cfg = {
+                "name":        raw_name,
+                "safe":        safe,
+                "mc_version":  mc_ver,
+                "type":        tag,
+                "type_label":  srv_type,
+                "port":        port,
+                "address":     f"{addr}.minehost.local",
+                "max_players": players,
+                "motd":        motd,
+                "dir":         str(srv_dir),
+            }
             save_server_cfg(safe, cfg)
 
-            self.lbl_status.configure(text="Fertig! Server bereit.")
-            self.progress.set(1.0)
+            self.prog_bar.set(1.0)
+            self.prog_lbl.configure(text="Fertig! Server wurde erstellt.", text_color=GREEN)
             time.sleep(0.8)
             self.destroy()
             self.on_done(safe)
 
-        threading.Thread(target=download, daemon=True).start()
+        threading.Thread(target=run, daemon=True).start()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HAUPT-APP
+# HAUPT-APP  (Aternos-Layout)
 # ══════════════════════════════════════════════════════════════════════════════
 class MainApp(ctk.CTk):
     def __init__(self, username):
         super().__init__()
         self.username    = username
-        self.server_name = None
-        self.server_cfg  = {}
+        self.server_name = None   # safe folder name
+        self.cfg         = {}
         self.proc        = None
-        self._users      = load_users()
-
         self.title("MineHost Local")
-        self.geometry("1160x740")
-        self.minsize(960,620)
-        self.configure(fg_color=BG_DARK)
+        self.geometry("1200x750")
+        self.minsize(1000,640)
+        self.configure(fg_color=BG)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-
-        self._build_layout()
+        self._build()
         servers = list_servers()
         if servers:
-            self._select_server(servers[0])
+            self._load_server(servers[0])
         else:
-            self._show_page("dashboard")
+            self._show("dashboard")
 
-    # ── Layout ────────────────────────────────────────────────────────────────
-    def _build_layout(self):
+    # ── Root-Layout ───────────────────────────────────────────────────────────
+    def _build(self):
         self.grid_columnconfigure(1, weight=1)
-        self.grid_columnconfigure(2, minsize=230)
         self.grid_rowconfigure(0, weight=1)
 
-        self.sidebar = ctk.CTkFrame(self, width=NAV_W, fg_color=BG_PANEL, corner_radius=0)
+        # Sidebar
+        self.sidebar = ctk.CTkFrame(self, width=SIDEBAR_W, fg_color=SIDEBAR_BG, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_propagate(False)
+
+        # Main
+        self.content = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
+        self.content.grid(row=0, column=1, sticky="nsew")
+
         self._build_sidebar()
 
-        self.main_frame = ctk.CTkFrame(self, fg_color=BG_DARK, corner_radius=0)
-        self.main_frame.grid(row=0, column=1, sticky="nsew")
-
-        self.right = ctk.CTkFrame(self, width=230, fg_color=BG_PANEL, corner_radius=0)
-        self.right.grid(row=0, column=2, sticky="nsew")
-        self.right.grid_propagate(False)
-        self._build_right()
-
     def _build_sidebar(self):
-        logo = make_logo(44)
+        # Logo + App-Name
         top = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        top.pack(pady=(18,2), padx=12, fill="x")
-        ctk.CTkLabel(top, image=logo, text="").pack(side="left", padx=(0,8))
-        ctk.CTkLabel(top, text="MineHost\nLocal", font=ctk.CTkFont("Segoe UI",13,"bold"),
-                     text_color=ACCENT, justify="left").pack(side="left")
+        top.pack(pady=(16,0), padx=14, fill="x")
+        ctk.CTkLabel(top, image=make_logo(36), text="").pack(side="left", padx=(0,8))
+        ctk.CTkLabel(top, text="MineHost Local",
+                     font=ctk.CTkFont("Segoe UI",13,"bold"), text_color=GREEN).pack(side="left")
 
-        ctk.CTkLabel(self.sidebar, text=f"@ {self.username}", text_color=TEXT_SEC,
-                     font=ctk.CTkFont("Segoe UI",11)).pack(pady=(0,10))
+        # Server-Auswahl
+        self._srv_box = ctk.CTkFrame(self.sidebar, fg_color=CARD, corner_radius=8)
+        self._srv_box.pack(padx=10, pady=(12,2), fill="x")
+        self._srv_dot = ctk.CTkLabel(self._srv_box, text="●", text_color=RED,
+                                      font=ctk.CTkFont("Segoe UI",10))
+        self._srv_dot.grid(row=0, column=0, padx=(8,0), pady=6)
+        self._srv_name_lbl = ctk.CTkLabel(self._srv_box, text="Kein Server",
+                                           text_color=TEXT, font=ctk.CTkFont("Segoe UI",12,"bold"),
+                                           anchor="w")
+        self._srv_name_lbl.grid(row=0, column=1, padx=6, pady=6, sticky="w")
+        self._srv_sub_lbl  = ctk.CTkLabel(self._srv_box, text="—",
+                                           text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",9),
+                                           anchor="w")
+        self._srv_sub_lbl.grid(row=1, column=1, padx=6, pady=(0,6), sticky="w")
+        self._srv_box.grid_columnconfigure(1, weight=1)
 
-        # Server-Auswahl Dropdown
-        servers = list_servers()
-        self._srv_var = ctk.StringVar(value=self.server_name or (servers[0] if servers else "—"))
-        self._srv_menu = ctk.CTkOptionMenu(self.sidebar, variable=self._srv_var,
-                                            values=servers or ["—"],
-                                            fg_color=BG_CARD, button_color=ACCENT_BLUE,
-                                            font=ctk.CTkFont("Segoe UI",12),
-                                            command=self._select_server)
-        self._srv_menu.pack(padx=10, pady=(0,10), fill="x")
+        # Wechsle Server (wenn mehrere)
+        self._srv_switch_btn = ctk.CTkButton(self.sidebar, text="▾  Server wechseln",
+                                              fg_color="transparent", hover_color=CARD,
+                                              text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",11),
+                                              height=28, anchor="w",
+                                              command=self._switch_server_popup)
+        self._srv_switch_btn.pack(padx=10, pady=(0,8), fill="x")
 
-        self._nav_btns = {}
+        sep = ctk.CTkFrame(self.sidebar, fg_color=BORDER, height=1)
+        sep.pack(padx=10, fill="x", pady=4)
+
+        # Navigations-Buttons
+        self._nav = {}
         pages = [
-            ("dashboard","  ● Server"),
-            ("options",  "  ⚙ Optionen"),
-            ("console",  "  > Konsole"),
-            ("log",      "  📋 Log"),
-            ("players",  "  👥 Spieler"),
-            ("software", "  💾 Software"),
-            ("plugins",  "  🧩 Plugins"),
-            ("files",    "  📁 Dateien"),
-            ("worlds",   "  🌍 Welten"),
-            ("backups",  "  🔒 Backups"),
-            ("access",   "  🔑 Zugriff"),
+            ("dashboard", "Server"),
+            ("options",   "Optionen"),
+            ("console",   "Konsole"),
+            ("log",       "Log"),
+            ("players",   "Spieler"),
+            ("software",  "Software"),
+            ("plugins",   "Plugins"),
+            ("files",     "Dateien"),
+            ("worlds",    "Welten"),
+            ("backups",   "Backups"),
+            ("access",    "Zugriff"),
         ]
         for key, label in pages:
             btn = ctk.CTkButton(self.sidebar, text=label, anchor="w",
-                                fg_color="transparent", hover_color=BG_CARD,
-                                text_color=TEXT_PRI, font=ctk.CTkFont("Segoe UI",12),
-                                height=34, corner_radius=8,
-                                command=lambda k=key: self._show_page(k))
+                                fg_color="transparent", hover_color=CARD,
+                                text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",13),
+                                height=36, corner_radius=6,
+                                command=lambda k=key: self._show(k))
             btn.pack(padx=8, pady=1, fill="x")
-            self._nav_btns[key] = btn
+            self._nav[key] = btn
 
-        ctk.CTkButton(self.sidebar, text="  + Neuer Server", anchor="w",
-                      fg_color="transparent", hover_color=BG_CARD, text_color=ACCENT,
-                      font=ctk.CTkFont("Segoe UI",12), height=34, corner_radius=8,
-                      command=self._new_server).pack(padx=8, pady=(14,4), fill="x", side="bottom")
+        sep2 = ctk.CTkFrame(self.sidebar, fg_color=BORDER, height=1)
+        sep2.pack(padx=10, fill="x", pady=8)
 
-    def _build_right(self):
-        ctk.CTkLabel(self.right, text="System-Monitor",
-                     font=ctk.CTkFont("Segoe UI",13,"bold"), text_color=TEXT_PRI
-                     ).pack(pady=(18,10), padx=14)
+        ctk.CTkButton(self.sidebar, text="+ Erstellen", anchor="w",
+                      fg_color="transparent", hover_color=CARD,
+                      text_color=GREEN, font=ctk.CTkFont("Segoe UI",13,"bold"),
+                      height=36, corner_radius=6,
+                      command=self._new_server).pack(padx=8, fill="x")
 
-        def stat_card(label, color=ACCENT_BLUE):
-            c = ctk.CTkFrame(self.right, fg_color=BG_CARD, corner_radius=10)
-            c.pack(padx=14, pady=4, fill="x")
-            ctk.CTkLabel(c, text=label, text_color=TEXT_SEC,
-                         font=ctk.CTkFont("Segoe UI",11)).pack(padx=12, pady=(8,0), anchor="w")
-            bar = ctk.CTkProgressBar(c, fg_color=BG_PANEL, progress_color=color)
+        # Benutzer unten
+        ctk.CTkLabel(self.sidebar, text=f"@ {self.username}",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",10)
+                     ).pack(side="bottom", pady=12)
+
+    # ── Navigation ────────────────────────────────────────────────────────────
+    def _clear(self):
+        for w in self.content.winfo_children(): w.destroy()
+
+    def _show(self, key):
+        for k,b in self._nav.items():
+            b.configure(
+                text_color=GREEN if k==key else TEXT_MUTED,
+                fg_color=CARD if k==key else "transparent",
+                font=ctk.CTkFont("Segoe UI",13,"bold" if k==key else "normal")
+            )
+        self._clear()
+        getattr(self, f"_p_{key}")()
+
+    def _load_server(self, safe_name):
+        self.server_name = safe_name
+        self.cfg         = load_server_cfg(safe_name)
+        is_on = self.proc is not None and self.proc.poll() is None
+        self._srv_name_lbl.configure(text=self.cfg.get("name", safe_name))
+        self._srv_sub_lbl.configure(text=self.cfg.get("address","localhost"))
+        self._srv_dot.configure(text_color=GREEN if is_on else RED)
+        self._show("dashboard")
+
+    def _switch_server_popup(self):
+        servers = list_servers()
+        if not servers:
+            messagebox.showinfo("Keine Server","Erstelle zuerst einen Server.")
+            return
+        win = ctk.CTkToplevel(self)
+        win.title("Server wechseln")
+        win.geometry("320x400")
+        win.configure(fg_color=SIDEBAR_BG)
+        win.grab_set()
+        ctk.CTkLabel(win, text="Server auswählen",
+                     font=ctk.CTkFont("Segoe UI",15,"bold"), text_color=TEXT).pack(pady=16)
+        for s in servers:
+            cfg = load_server_cfg(s)
+            def pick(n=s, w=win):
+                w.destroy(); self._load_server(n)
+            btn = ctk.CTkButton(win, text=cfg.get("name",s),
+                                 fg_color=CARD, hover_color=BORDER, text_color=TEXT,
+                                 font=ctk.CTkFont("Segoe UI",13), height=44,
+                                 command=pick)
+            btn.pack(padx=16, pady=4, fill="x")
+
+    def _new_server(self):
+        CreateServerWindow(self, on_done=self._on_created)
+
+    def _on_created(self, safe_name):
+        self._load_server(safe_name)
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE: DASHBOARD  (Aternos-Stil)
+    # ═════════════════════════════════════════════════════════════════════════
+    def _p_dashboard(self):
+        self.content.grid_rowconfigure(0, weight=1)
+        self.content.grid_columnconfigure(0, weight=1)
+
+        if not self.server_name or not self.cfg:
+            f = ctk.CTkFrame(self.content, fg_color="transparent")
+            f.place(relx=0.5, rely=0.5, anchor="center")
+            ctk.CTkLabel(f, text="Kein Server vorhanden.",
+                         font=ctk.CTkFont("Segoe UI",18), text_color=TEXT_MUTED).pack(pady=12)
+            ctk.CTkButton(f, text="+ Server erstellen",
+                          fg_color=GREEN, hover_color=GREEN_HOV, text_color="#000",
+                          font=ctk.CTkFont("Segoe UI",14,"bold"), height=48, width=220,
+                          command=self._new_server).pack()
+            return
+
+        is_on  = self.proc is not None and self.proc.poll() is None
+        cfg    = self.cfg
+
+        # ── Scrollbarer Wrapper ──
+        wrap = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
+        wrap.pack(fill="both", expand=True)
+        wrap.grid_columnconfigure(0, weight=1)
+
+        # ── Server-Titel + Adresse ──
+        head = ctk.CTkFrame(wrap, fg_color="transparent")
+        head.pack(pady=(24,0))
+        ctk.CTkLabel(head, text=cfg.get("name","Server"),
+                     font=ctk.CTkFont("Segoe UI",26,"bold"), text_color=TEXT).pack()
+        addr_row = ctk.CTkFrame(head, fg_color="transparent")
+        addr_row.pack(pady=(4,0))
+        ctk.CTkLabel(addr_row, text=cfg.get("address","localhost"),
+                     font=ctk.CTkFont("Segoe UI",13), text_color=TEXT_MUTED).pack(side="left", padx=(0,10))
+        ctk.CTkButton(addr_row, text="Verbinden",
+                      fg_color=CARD, hover_color=BORDER, text_color=TEXT,
+                      font=ctk.CTkFont("Segoe UI",11), height=26, width=80, corner_radius=4,
+                      command=lambda: self.clipboard_append(cfg.get("address","")) or self.update()
+                      ).pack(side="left")
+
+        # ── Status-Banner ──
+        status_color = GREEN if is_on else RED
+        status_text  = "● Online" if is_on else "● Ausgeschaltet"
+        banner = ctk.CTkFrame(wrap, fg_color=status_color, corner_radius=0, height=46)
+        banner.pack(fill="x", pady=16)
+        banner.pack_propagate(False)
+        ctk.CTkLabel(banner, text=status_text,
+                     font=ctk.CTkFont("Segoe UI",15,"bold"),
+                     text_color="#000").pack(expand=True)
+
+        # ── Start/Stopp Button ──
+        self._start_btn = ctk.CTkButton(wrap,
+            text="Stoppen" if is_on else "Starten",
+            fg_color=RED if is_on else GREEN,
+            hover_color=RED_HOV if is_on else GREEN_HOV,
+            text_color="#000",
+            font=ctk.CTkFont("Segoe UI",18,"bold"),
+            width=180, height=56, corner_radius=28,
+            command=self._toggle)
+        self._start_btn.pack(pady=8)
+
+        # ── Info-Karten (wie Aternos) ──
+        info_frame = ctk.CTkFrame(wrap, fg_color=SIDEBAR_BG, corner_radius=10)
+        info_frame.pack(padx=40, pady=16, fill="x")
+
+        def info_row(label, value, btn_text=None, btn_cmd=None, copy=False):
+            f = ctk.CTkFrame(info_frame, fg_color="transparent")
+            f.pack(fill="x", padx=0)
+            f.grid_columnconfigure(1, weight=1)
+            # Farbiger Streifen links
+            stripe = ctk.CTkFrame(f, width=4, fg_color=GREEN, corner_radius=0)
+            stripe.grid(row=0, column=0, sticky="ns", padx=(0,0))
+            lbl_f = ctk.CTkFrame(f, fg_color="transparent")
+            lbl_f.grid(row=0, column=1, padx=14, pady=10, sticky="w")
+            ctk.CTkLabel(lbl_f, text=label, text_color=TEXT_MUTED,
+                         font=ctk.CTkFont("Segoe UI",10,"bold")).pack(anchor="w")
+            ctk.CTkLabel(lbl_f, text=value, text_color=TEXT,
+                         font=ctk.CTkFont("Segoe UI",14)).pack(anchor="w")
+            btn_f = ctk.CTkFrame(f, fg_color="transparent")
+            btn_f.grid(row=0, column=2, padx=14, pady=10)
+            if copy:
+                ctk.CTkButton(btn_f, text="Kopieren", fg_color=CARD, hover_color=BORDER,
+                               text_color=TEXT, font=ctk.CTkFont("Segoe UI",11),
+                               height=30, width=90, corner_radius=4,
+                               command=lambda v=value: self.clipboard_append(v) or self.update()
+                               ).pack()
+            if btn_text and btn_cmd:
+                ctk.CTkButton(btn_f, text=btn_text, fg_color=CARD, hover_color=BORDER,
+                               text_color=TEXT, font=ctk.CTkFont("Segoe UI",11),
+                               height=30, width=90, corner_radius=4,
+                               command=btn_cmd).pack()
+            # Trennlinie
+            ctk.CTkFrame(info_frame, fg_color=BORDER, height=1).pack(fill="x")
+
+        addr_val = f"{cfg.get('address','localhost')}:{cfg.get('port','25565')}"
+        info_row("Adresse", addr_val, copy=True)
+        info_row("Software", cfg.get("type_label", cfg.get("type","Vanilla")).capitalize(),
+                 btn_text="Ändern", btn_cmd=lambda: self._show("software"))
+        info_row("Version", cfg.get("mc_version","?"),
+                 btn_text="Ändern", btn_cmd=lambda: self._show("software"))
+
+        # ── System-Monitor kompakt ──
+        mon = ctk.CTkFrame(wrap, fg_color=SIDEBAR_BG, corner_radius=10)
+        mon.pack(padx=40, pady=8, fill="x")
+        ctk.CTkLabel(mon, text="System-Monitor", text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11,"bold")).pack(padx=16, pady=(10,4), anchor="w")
+        mon_row = ctk.CTkFrame(mon, fg_color="transparent")
+        mon_row.pack(padx=16, pady=(0,12), fill="x")
+        mon_row.grid_columnconfigure((0,1), weight=1)
+
+        def mini_stat(parent, col, label):
+            f = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=8)
+            f.grid(row=0, column=col, padx=(0,8) if col==0 else (8,0), sticky="ew")
+            ctk.CTkLabel(f, text=label, text_color=TEXT_MUTED,
+                         font=ctk.CTkFont("Segoe UI",10)).pack(padx=12, pady=(8,2), anchor="w")
+            bar = ctk.CTkProgressBar(f, fg_color=SIDEBAR_BG, progress_color=BLUE)
             bar.set(0)
-            bar.pack(padx=12, pady=(4,2), fill="x")
-            lbl = ctk.CTkLabel(c, text="0%", text_color=TEXT_PRI,
-                               font=ctk.CTkFont("Segoe UI",12,"bold"))
+            bar.pack(padx=12, pady=(0,2), fill="x")
+            lbl = ctk.CTkLabel(f, text="0%", text_color=TEXT,
+                                font=ctk.CTkFont("Segoe UI",12,"bold"))
             lbl.pack(padx=12, pady=(0,8), anchor="w")
             return bar, lbl
 
-        self.cpu_bar, self.cpu_lbl = stat_card("CPU-Auslastung", ACCENT_BLUE)
-        self.ram_bar, self.ram_lbl = stat_card("RAM-Auslastung", ACCENT)
-        self.ram_det = ctk.CTkLabel(self.right, text="", text_color=TEXT_SEC,
-                                     font=ctk.CTkFont("Segoe UI",10))
-        self.ram_det.pack(padx=14, anchor="w")
-
-        sep = ctk.CTkFrame(self.right, height=1, fg_color=BG_CARD)
-        sep.pack(padx=14, pady=14, fill="x")
-
-        ctk.CTkLabel(self.right, text="Server-Info",
-                     font=ctk.CTkFont("Segoe UI",13,"bold"), text_color=TEXT_PRI
-                     ).pack(padx=14, pady=(0,8), anchor="w")
-        self.info_ip   = ctk.CTkLabel(self.right, text="IP: localhost", text_color=ACCENT,
-                                       font=ctk.CTkFont("Segoe UI",12,"bold"))
-        self.info_ip.pack(padx=14, anchor="w")
-        self.info_port = ctk.CTkLabel(self.right, text="Port: —", text_color=TEXT_SEC,
-                                       font=ctk.CTkFont("Segoe UI",11))
-        self.info_port.pack(padx=14, anchor="w")
-        self.info_ver  = ctk.CTkLabel(self.right, text="Version: —", text_color=TEXT_SEC,
-                                       font=ctk.CTkFont("Segoe UI",11))
-        self.info_ver.pack(padx=14, anchor="w")
-        self.info_type = ctk.CTkLabel(self.right, text="Typ: —", text_color=TEXT_SEC,
-                                       font=ctk.CTkFont("Segoe UI",11))
-        self.info_type.pack(padx=14, anchor="w")
-        self.info_addr = ctk.CTkLabel(self.right, text="Adresse: —", text_color=TEXT_SEC,
-                                       font=ctk.CTkFont("Segoe UI",11), wraplength=200)
-        self.info_addr.pack(padx=14, anchor="w", pady=(0,4))
-
+        self._cpu_bar, self._cpu_lbl = mini_stat(mon_row, 0, "CPU")
+        self._ram_bar, self._ram_lbl = mini_stat(mon_row, 1, "RAM")
         self._update_monitor()
 
     def _update_monitor(self):
+        if not hasattr(self,"_cpu_bar"): return
         cpu = psutil.cpu_percent()
         ram = psutil.virtual_memory()
-        self.cpu_bar.set(cpu/100)
-        self.cpu_lbl.configure(text=f"{cpu:.1f}%")
-        self.ram_bar.set(ram.percent/100)
-        self.ram_lbl.configure(text=f"{ram.percent:.1f}%")
-        self.ram_det.configure(text=f"{ram.used/1e9:.1f} GB / {ram.total/1e9:.1f} GB")
+        try:
+            self._cpu_bar.set(cpu/100); self._cpu_lbl.configure(text=f"{cpu:.0f}%")
+            self._ram_bar.set(ram.percent/100); self._ram_lbl.configure(text=f"{ram.percent:.0f}%")
+        except: return
         self.after(2000, self._update_monitor)
 
-    def _update_info(self):
-        cfg = self.server_cfg
-        self.info_ip.configure(text=f"IP: {cfg.get('address', get_local_ip())}")
-        self.info_port.configure(text=f"Port: {cfg.get('port','25565')}")
-        self.info_ver.configure(text=f"Version: {cfg.get('mc_version','?')}")
-        self.info_type.configure(text=f"Typ: {cfg.get('server_type_label', cfg.get('type','?'))}")
-        self.info_addr.configure(text=f"Adresse: {cfg.get('address','localhost')}:{cfg.get('port','25565')}")
+    # ── Server starten/stoppen ────────────────────────────────────────────────
+    def _toggle(self):
+        if self.proc and self.proc.poll() is None: self._stop()
+        else: self._start()
 
-    # ── Navigation ────────────────────────────────────────────────────────────
-    def _clear_main(self):
-        for w in self.main_frame.winfo_children():
-            w.destroy()
-
-    def _show_page(self, key):
-        for k, b in self._nav_btns.items():
-            b.configure(fg_color=ACCENT if k==key else "transparent",
-                        text_color="#000" if k==key else TEXT_PRI)
-        self._clear_main()
-        getattr(self, f"_page_{key}")()
-
-    def _select_server(self, name):
-        self.server_name = name
-        self.server_cfg  = load_server_cfg(name)
-        self._srv_var.set(name)
-        self._update_info()
-        self._show_page("dashboard")
-
-    def _new_server(self):
-        SetupWizard(self, on_done=self._on_server_created)
-
-    def _on_server_created(self, name):
-        servers = list_servers()
-        self._srv_menu.configure(values=servers)
-        self._select_server(name)
-
-    # ── DASHBOARD ─────────────────────────────────────────────────────────────
-    def _page_dashboard(self):
-        if not self.server_name:
-            ctk.CTkLabel(self.main_frame, text="Kein Server vorhanden.",
-                         font=ctk.CTkFont("Segoe UI",16), text_color=TEXT_SEC).pack(expand=True)
-            ctk.CTkButton(self.main_frame, text="+ Server erstellen",
-                          fg_color=ACCENT, text_color="#000", hover_color="#00a846",
-                          font=ctk.CTkFont("Segoe UI",14,"bold"), height=50,
-                          command=self._new_server).pack(pady=12, padx=60, fill="x")
-            return
-
-        cfg  = self.server_cfg
-        name = cfg.get("name", self.server_name)
-        is_on= self.proc is not None and self.proc.poll() is None
-
-        f = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        f.pack(expand=True)
-
-        ctk.CTkLabel(f, text=name, font=ctk.CTkFont("Segoe UI",26,"bold"),
-                     text_color=TEXT_PRI).pack(pady=(0,4))
-        ctk.CTkLabel(f, text=cfg.get("address","localhost"),
-                     font=ctk.CTkFont("Segoe UI",13), text_color=TEXT_SEC).pack()
-
-        # Status-Banner
-        banner = ctk.CTkFrame(f, fg_color=ACCENT if is_on else ACCENT_RED,
-                               corner_radius=10, height=48)
-        banner.pack(fill="x", padx=40, pady=16)
-        banner.pack_propagate(False)
-        ctk.CTkLabel(banner,
-                     text=f"{'● Online' if is_on else '● Ausgeschaltet'}",
-                     font=ctk.CTkFont("Segoe UI",16,"bold"),
-                     text_color="#000" if is_on else "#fff").pack(expand=True)
-
-        # Start/Stopp
-        self.start_btn = ctk.CTkButton(f,
-            text="Stoppen" if is_on else "Starten",
-            fg_color=ACCENT_RED if is_on else ACCENT,
-            hover_color="#c62828" if is_on else "#00a846",
-            text_color="#fff" if is_on else "#000",
-            font=ctk.CTkFont("Segoe UI",18,"bold"),
-            width=200, height=56, corner_radius=28,
-            command=self._toggle_server)
-        self.start_btn.pack(pady=12)
-
-        # Verbinden-Info
-        addr_frame = ctk.CTkFrame(f, fg_color=BG_PANEL, corner_radius=10)
-        addr_frame.pack(padx=40, pady=8, fill="x")
-        ctk.CTkLabel(addr_frame, text="Adresse", text_color=TEXT_SEC,
-                     font=ctk.CTkFont("Segoe UI",11)).pack(padx=14, pady=(8,0), anchor="w")
-        addr_row = ctk.CTkFrame(addr_frame, fg_color="transparent")
-        addr_row.pack(padx=14, pady=(2,10), fill="x")
-        addr_text = f"{cfg.get('address','localhost')}:{cfg.get('port','25565')}"
-        ctk.CTkLabel(addr_row, text=addr_text, text_color=ACCENT,
-                     font=ctk.CTkFont("Segoe UI",14,"bold")).pack(side="left")
-        ctk.CTkButton(addr_row, text="Kopieren", fg_color=ACCENT_BLUE, text_color="#fff",
-                      height=28, width=80, font=ctk.CTkFont("Segoe UI",11),
-                      command=lambda: self.clipboard_append(addr_text) or self.update()
-                      ).pack(side="right")
-
-        # Info-Karten
-        cards_frame = ctk.CTkFrame(f, fg_color="transparent")
-        cards_frame.pack(padx=40, pady=4, fill="x")
-        def info_card(label, value, color=TEXT_PRI):
-            c = ctk.CTkFrame(cards_frame, fg_color=BG_PANEL, corner_radius=8)
-            c.pack(side="left", expand=True, fill="x", padx=4)
-            ctk.CTkLabel(c, text=label, text_color=TEXT_SEC,
-                         font=ctk.CTkFont("Segoe UI",10)).pack(pady=(8,0))
-            ctk.CTkLabel(c, text=value, text_color=color,
-                         font=ctk.CTkFont("Segoe UI",13,"bold")).pack(pady=(2,8))
-
-        info_card("Software", cfg.get("server_type_label", cfg.get("type","vanilla")).capitalize())
-        info_card("Version",  cfg.get("mc_version","?"))
-        info_card("Spieler",  f"0 / {cfg.get('max_players','20')}", ACCENT)
-
-    def _toggle_server(self):
-        if self.proc and self.proc.poll() is None:
-            self._stop_server()
-        else:
-            self._start_server()
-
-    def _start_server(self):
-        srv_dir = Path(self.server_cfg.get("dir", str(SERVERS_DIR/self.server_name)))
+    def _start(self):
+        srv_dir = Path(self.cfg.get("dir",""))
         if not (srv_dir/"server.jar").exists():
             messagebox.showerror("Fehler","server.jar nicht gefunden.")
             return
@@ -662,724 +776,684 @@ class MainApp(ctk.CTk):
                 "Java nicht gefunden.\nBitte installieren: https://adoptium.net")
             return
         threading.Thread(target=self._read_log, daemon=True).start()
-        self._show_page("dashboard")
+        self._srv_dot.configure(text_color=GREEN)
+        self._show("dashboard")
 
-    def _stop_server(self):
+    def _stop(self):
         if self.proc:
-            try:
-                self.proc.stdin.write("stop\n"); self.proc.stdin.flush()
-                self.proc.wait(timeout=15)
+            try: self.proc.stdin.write("stop\n"); self.proc.stdin.flush(); self.proc.wait(timeout=15)
             except: self.proc.kill()
             self.proc = None
-        self._show_page("dashboard")
+        self._srv_dot.configure(text_color=RED)
+        self._show("dashboard")
 
     def _read_log(self):
         for line in self.proc.stdout:
-            self._append_console(line)
+            self._append_log(line)
 
-    def _append_console(self, text):
-        if hasattr(self, "_con_box"):
-            self._con_box.configure(state="normal")
-            self._con_box.insert("end", text)
-            self._con_box.see("end")
-            self._con_box.configure(state="disabled")
+    def _append_log(self, text):
+        if hasattr(self,"_log_box"):
+            try:
+                self._log_box.configure(state="normal")
+                self._log_box.insert("end", text)
+                self._log_box.see("end")
+                self._log_box.configure(state="disabled")
+            except: pass
 
-    # ── LOG ───────────────────────────────────────────────────────────────────
-    def _page_log(self):
-        self._page_console(log_only=True)
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE: KONSOLE
+    # ═════════════════════════════════════════════════════════════════════════
+    def _p_console(self):
+        self._console_page(log_only=False)
 
-    # ── KONSOLE ───────────────────────────────────────────────────────────────
-    def _page_console(self, log_only=False):
-        self.main_frame.grid_rowconfigure(1, weight=1)
-        self.main_frame.grid_columnconfigure(0, weight=1)
+    def _p_log(self):
+        self._console_page(log_only=True)
 
-        ctk.CTkLabel(self.main_frame,
-                     text="Log" if log_only else "Konsole",
-                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT_PRI
-                     ).grid(row=0, column=0, sticky="w", padx=20, pady=(16,4))
+    def _console_page(self, log_only):
+        self.content.grid_rowconfigure(1, weight=1)
+        self.content.grid_columnconfigure(0, weight=1)
 
-        self._con_box = ctk.CTkTextbox(self.main_frame, fg_color=BG_CARD,
-                                        text_color="#a5d6a7",
+        hdr = self._page_header("Log" if log_only else "Konsole")
+
+        self._log_box = ctk.CTkTextbox(self.content, fg_color=CARD, text_color="#a5d6a7",
                                         font=ctk.CTkFont("Consolas",11), state="disabled")
-        self._con_box.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,8))
+        self._log_box.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,8))
 
         if not log_only:
-            inp = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+            inp = ctk.CTkFrame(self.content, fg_color="transparent")
             inp.grid(row=2, column=0, sticky="ew", padx=20, pady=(0,16))
             inp.grid_columnconfigure(0, weight=1)
-            self._cmd_e = ctk.CTkEntry(inp, placeholder_text="Befehl (z.B. op Steve)…",
-                                        fg_color=BG_CARD, border_color=ACCENT_BLUE,
+            self._cmd_e = ctk.CTkEntry(inp, placeholder_text="Befehl eingeben…",
+                                        fg_color=CARD, border_color=BORDER, text_color=TEXT,
                                         font=ctk.CTkFont("Consolas",12))
-            self._cmd_e.grid(row=0, column=0, sticky="ew", padx=(0,8))
-            self._cmd_e.bind("<Return>", lambda e: self._send_cmd())
-            ctk.CTkButton(inp, text="Senden", fg_color=ACCENT_BLUE, text_color="#fff",
-                          width=90, command=self._send_cmd).grid(row=0, column=1)
+            self._cmd_e.grid(row=0,column=0,sticky="ew",padx=(0,8))
+            self._cmd_e.bind("<Return>", lambda _: self._send())
+            ctk.CTkButton(inp,text="Senden",fg_color=GREEN,hover_color=GREEN_HOV,
+                          text_color="#000",width=90,command=self._send).grid(row=0,column=1)
 
-    def _send_cmd(self):
+    def _send(self):
+        if not hasattr(self,"_cmd_e"): return
         cmd = self._cmd_e.get().strip()
         if not cmd: return
         if self.proc and self.proc.poll() is None:
             try:
                 self.proc.stdin.write(cmd+"\n"); self.proc.stdin.flush()
-                self._append_console(f"> {cmd}\n")
+                self._append_log(f"> {cmd}\n")
             except Exception as e:
-                self._append_console(f"[Fehler] {e}\n")
+                self._append_log(f"[Fehler] {e}\n")
         else:
-            self._append_console("[Server nicht gestartet]\n")
+            self._append_log("[Server ist nicht gestartet]\n")
         self._cmd_e.delete(0,"end")
 
-    # ── SPIELER ───────────────────────────────────────────────────────────────
-    def _page_players(self):
-        ctk.CTkLabel(self.main_frame, text="Spieler verwalten",
-                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT_PRI
-                     ).pack(pady=(16,10), padx=20, anchor="w")
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE: OPTIONEN
+    # ═════════════════════════════════════════════════════════════════════════
+    def _p_options(self):
+        hdr = self._page_header("Optionen")
         if not self.server_name:
-            ctk.CTkLabel(self.main_frame, text="Kein Server.", text_color=TEXT_SEC).pack(); return
+            ctk.CTkLabel(self.content, text="Kein Server.", text_color=TEXT_MUTED).grid(row=1,column=0); return
 
-        tabs = self._make_tabs(self.main_frame, ["OP-Liste","Whitelist","Gebannte Spieler"])
-        srv_dir = SERVERS_DIR / self.server_name
+        self.content.grid_rowconfigure(1, weight=1)
+        cfg = self.cfg
+        srv_dir = Path(cfg.get("dir",""))
+        props_file = srv_dir/"server.properties"
 
-        def player_tab(tab_name, fname):
-            tab = tabs.tab(tab_name)
-            tab.grid_columnconfigure(0, weight=1); tab.grid_rowconfigure(0, weight=1)
-            fp = srv_dir / fname
+        def read_props():
+            d={}
+            if props_file.exists():
+                for line in props_file.read_text(encoding="utf-8").splitlines():
+                    if "=" in line and not line.startswith("#"):
+                        k,_,v = line.partition("=")
+                        d[k.strip()] = v.strip()
+            return d
+
+        props = read_props()
+        scroll = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
+        scroll.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,8))
+        widgets = {}
+
+        # Aternos-Optionen-Panel
+        def section(title):
+            ctk.CTkLabel(scroll, text=title, text_color=TEXT_MUTED,
+                         font=ctk.CTkFont("Segoe UI",11,"bold")).pack(anchor="w", pady=(14,4))
+            f = ctk.CTkFrame(scroll, fg_color=SIDEBAR_BG, corner_radius=10)
+            f.pack(fill="x")
+            return f
+
+        def toggle_row(parent, key, label, default="false"):
+            var = ctk.BooleanVar(value=props.get(key,default)=="true")
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x")
+            row.grid_columnconfigure(0, weight=1)
+            lf = ctk.CTkFrame(row, fg_color="transparent")
+            lf.grid(row=0,column=0,padx=14,pady=10,sticky="w")
+            ctk.CTkLabel(lf,text=label,text_color=TEXT,font=ctk.CTkFont("Segoe UI",13)).pack(anchor="w")
+            ctk.CTkLabel(lf,text=key,text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",9)).pack(anchor="w")
+            sw = ctk.CTkSwitch(row, variable=var, text="",
+                                progress_color=GREEN, button_color=TEXT)
+            sw.grid(row=0,column=1,padx=14)
+            ctk.CTkFrame(parent,fg_color=BORDER,height=1).pack(fill="x")
+            widgets[key]=("bool",var)
+
+        def drop_row(parent, key, label, opts, default=""):
+            var = ctk.StringVar(value=props.get(key,default))
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x")
+            row.grid_columnconfigure(0, weight=1)
+            lf = ctk.CTkFrame(row, fg_color="transparent")
+            lf.grid(row=0,column=0,padx=14,pady=10,sticky="w")
+            ctk.CTkLabel(lf,text=label,text_color=TEXT,font=ctk.CTkFont("Segoe UI",13)).pack(anchor="w")
+            ctk.CTkLabel(lf,text=key,text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",9)).pack(anchor="w")
+            ctk.CTkOptionMenu(row, variable=var, values=opts,
+                               fg_color=CARD, button_color=BLUE,
+                               width=160,font=ctk.CTkFont("Segoe UI",12)
+                               ).grid(row=0,column=1,padx=14)
+            ctk.CTkFrame(parent,fg_color=BORDER,height=1).pack(fill="x")
+            widgets[key]=("str",var)
+
+        def entry_row(parent, key, label, default=""):
+            val = props.get(key,default)
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x")
+            row.grid_columnconfigure(0, weight=1)
+            lf = ctk.CTkFrame(row, fg_color="transparent")
+            lf.grid(row=0,column=0,padx=14,pady=10,sticky="w")
+            ctk.CTkLabel(lf,text=label,text_color=TEXT,font=ctk.CTkFont("Segoe UI",13)).pack(anchor="w")
+            ctk.CTkLabel(lf,text=key,text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",9)).pack(anchor="w")
+            e = ctk.CTkEntry(row, fg_color=CARD, border_color=BORDER,
+                              width=180, font=ctk.CTkFont("Segoe UI",12))
+            e.insert(0,val)
+            e.grid(row=0,column=1,padx=14,pady=8)
+            ctk.CTkFrame(parent,fg_color=BORDER,height=1).pack(fill="x")
+            widgets[key]=("entry",e)
+
+        p1 = section("Allgemein")
+        drop_row(p1,"difficulty","Schwierigkeitsgrad",["peaceful","easy","normal","hard"],"normal")
+        drop_row(p1,"gamemode","Spielmodus",["survival","creative","adventure","spectator"],"survival")
+        entry_row(p1,"max-players","Spieler (max-players)","20")
+        entry_row(p1,"view-distance","Sichtweite (Chunks)","10")
+        entry_row(p1,"player-idle-timeout","Idle Timeout (Minuten, 0=aus)","0")
+        entry_row(p1,"spawn-protection","Spawn-Schutz (Radius in Blöcken)","16")
+
+        p2 = section("Spielmechaniken")
+        toggle_row(p2,"pvp","PvP","true")
+        toggle_row(p2,"allow-flight","Fliegen","false")
+        toggle_row(p2,"force-gamemode","Spielmodus erzwingen","false")
+        toggle_row(p2,"enable-command-block","Command Blocks","false")
+
+        p3 = section("Zugang")
+        toggle_row(p3,"online-mode","Online-Mode  (aus = Cracked)","true")
+        toggle_row(p3,"white-list","Whitelist","false")
+
+        p4 = section("Server-Details")
+        entry_row(p4,"server-port","Port","25565")
+        entry_row(p4,"motd","Beschreibung (MotD)","A Minecraft Server")
+        entry_row(p4,"level-name","Weltname","world")
+        entry_row(p4,"level-seed","Welt-Seed (leer = zufällig)","")
+        entry_row(p4,"resource-pack","Ressourcenpaket URL","")
+
+        def save():
+            new = dict(props)
+            for k,(t,w) in widgets.items():
+                new[k] = ("true" if w.get() else "false") if t=="bool" else w.get()
+            props_file.write_text("\n".join(f"{k}={v}" for k,v in new.items())+"\n",encoding="utf-8")
+            self.cfg["port"] = new.get("server-port","25565")
+            self.cfg["motd"] = new.get("motd","")
+            save_server_cfg(self.server_name, self.cfg)
+            messagebox.showinfo("Gespeichert","server.properties gespeichert.\nServer neu starten, damit Änderungen wirksam werden.")
+
+        ctk.CTkButton(self.content, text="Speichern",
+                      fg_color=GREEN, hover_color=GREEN_HOV, text_color="#000",
+                      font=ctk.CTkFont("Segoe UI",14,"bold"), height=46, corner_radius=8,
+                      command=save).grid(row=2, column=0, padx=20, pady=(4,16), sticky="ew")
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE: SPIELER
+    # ═════════════════════════════════════════════════════════════════════════
+    def _p_players(self):
+        self._page_header("Spieler")
+        self.content.grid_rowconfigure(1, weight=1)
+        if not self.server_name:
+            ctk.CTkLabel(self.content,text="Kein Server.",text_color=TEXT_MUTED).grid(row=1,column=0); return
+
+        tabs = self._tabs(["OP-Liste","Whitelist","Gebannte Spieler"])
+        tabs.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,16))
+        srv_dir = Path(self.cfg.get("dir",""))
+
+        for tab_name, fname, cmd_prefix in [
+            ("OP-Liste","ops.json","op"),
+            ("Whitelist","whitelist.json","whitelist add"),
+            ("Gebannte Spieler","banned-players.json","ban")
+        ]:
+            t = tabs.tab(tab_name)
+            t.grid_columnconfigure(0, weight=1); t.grid_rowconfigure(0, weight=1)
+            fp = srv_dir/fname
             data = []
             if fp.exists():
-                try: data = json.loads(fp.read_text())
+                try: data = json.loads(fp.read_text(encoding="utf-8"))
                 except: pass
             names = [p.get("name","?") for p in data]
-            box = ctk.CTkTextbox(tab, fg_color=BG_CARD, text_color=TEXT_PRI,
-                                  font=ctk.CTkFont("Segoe UI",13))
-            box.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0,8))
-            box.insert("end", "\n".join(names) or "(Leer)")
+            box = ctk.CTkTextbox(t, fg_color=CARD, text_color=TEXT, font=ctk.CTkFont("Segoe UI",13))
+            box.grid(row=0,column=0,columnspan=2,sticky="nsew",pady=(0,8))
+            box.insert("end","\n".join(names) or "(Leer)")
             box.configure(state="disabled")
-            ent = ctk.CTkEntry(tab, placeholder_text="Spielername…",
-                                fg_color=BG_CARD, border_color=ACCENT_BLUE)
-            ent.grid(row=1, column=0, sticky="ew", padx=(0,8), pady=(0,4))
-            def add(e=ent, b=box, fp2=fp, d=data):
-                n = e.get().strip()
+            ent = ctk.CTkEntry(t,placeholder_text="Spielername…",fg_color=CARD,
+                                border_color=BORDER,text_color=TEXT)
+            ent.grid(row=1,column=0,sticky="ew",padx=(0,8),pady=(0,4))
+            def add(e=ent,b=box,fp2=fp,d=data,cp=cmd_prefix):
+                n=e.get().strip()
                 if not n: return
                 if not any(p.get("name")==n for p in d):
                     d.append({"uuid":"","name":n})
-                    fp2.write_text(json.dumps(d, indent=2))
+                    fp2.write_text(json.dumps(d,indent=2),encoding="utf-8")
                 b.configure(state="normal"); b.insert("end",f"\n{n}"); b.configure(state="disabled")
+                if self.proc and self.proc.poll() is None:
+                    try: self.proc.stdin.write(f"{cp} {n}\n"); self.proc.stdin.flush()
+                    except: pass
                 e.delete(0,"end")
-            ctk.CTkButton(tab, text="Hinzufügen", fg_color=ACCENT, text_color="#000",
-                          width=110, command=add).grid(row=1, column=1, pady=(0,4))
+            ctk.CTkButton(t,text="Hinzufügen",fg_color=GREEN,hover_color=GREEN_HOV,
+                          text_color="#000",width=110,command=add
+                          ).grid(row=1,column=1,pady=(0,4))
 
-        player_tab("OP-Liste","ops.json")
-        player_tab("Whitelist","whitelist.json")
-        player_tab("Gebannte Spieler","banned-players.json")
-
-    # ── SOFTWARE ──────────────────────────────────────────────────────────────
-    def _page_software(self):
-        ctk.CTkLabel(self.main_frame, text="Software",
-                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT_PRI
-                     ).pack(pady=(16,4), padx=20, anchor="w")
-        ctk.CTkLabel(self.main_frame,
-                     text="Wähle den Server-Typ. Änderungen erfordern einen Neustart.",
-                     text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",12)
-                     ).pack(padx=20, anchor="w", pady=(0,12))
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE: SOFTWARE
+    # ═════════════════════════════════════════════════════════════════════════
+    def _p_software(self):
+        self._page_header("Software")
+        self.content.grid_rowconfigure(1, weight=1)
         if not self.server_name:
-            ctk.CTkLabel(self.main_frame, text="Kein Server.", text_color=TEXT_SEC).pack(); return
+            ctk.CTkLabel(self.content,text="Kein Server.",text_color=TEXT_MUTED).grid(row=1,column=0); return
 
-        scroll = ctk.CTkScrollableFrame(self.main_frame, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=20, pady=(0,12))
+        scroll = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
+        scroll.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,16))
 
-        ctk.CTkLabel(scroll, text="Java Edition", text_color=ACCENT,
+        ctk.CTkLabel(scroll, text="Java Edition", text_color=GREEN,
                      font=ctk.CTkFont("Segoe UI",13,"bold")).pack(anchor="w", pady=(0,8))
 
-        grid_f = ctk.CTkFrame(scroll, fg_color="transparent")
-        grid_f.pack(fill="x")
+        grid = ctk.CTkFrame(scroll, fg_color="transparent")
+        grid.pack(fill="x")
         self._sw_btns = {}
-        cur = self.server_cfg.get("server_type_label","Vanilla")
-        types = list(SERVER_TYPES.keys())
-        cols  = 3
-        for i, name in enumerate(types):
-            info = SERVER_TYPES[name]
-            r, c = divmod(i, cols)
-            selected = name == cur
-            btn = ctk.CTkButton(grid_f,
-                text=f"{info['icon']}  {name}",
-                fg_color=info["color"] if selected else BG_CARD,
-                hover_color=info["color"],
-                text_color="#000" if selected else TEXT_PRI,
-                font=ctk.CTkFont("Segoe UI",12), height=54,
-                corner_radius=8, command=lambda n=name: self._pick_software(n))
-            btn.grid(row=r, column=c, padx=4, pady=4, sticky="ew")
-            grid_f.grid_columnconfigure(c, weight=1)
-            self._sw_btns[name] = btn
+        cur = self.cfg.get("type_label","Vanilla")
+        self._sel_sw = cur
+        for i,(name,info) in enumerate(SERVER_TYPES.items()):
+            r,c = divmod(i,3)
+            f = ctk.CTkFrame(grid, fg_color=info["color"] if name==cur else CARD, corner_radius=8)
+            f.grid(row=r,column=c,padx=3,pady=3,sticky="nsew")
+            grid.grid_columnconfigure(c, weight=1)
+            ctk.CTkLabel(f,text=f"{info['icon']}  {name}",
+                         text_color="#000" if name==cur else TEXT,
+                         font=ctk.CTkFont("Segoe UI",13,"bold")).pack(pady=(12,2))
+            ctk.CTkLabel(f,text=info["desc"],text_color="#000" if name==cur else TEXT_MUTED,
+                         font=ctk.CTkFont("Segoe UI",9),wraplength=150).pack(pady=(0,12))
+            def pick(n=name,fi=info,fr=f):
+                self._sel_sw = n
+                for nm,(btn_f,_) in self._sw_btns.items():
+                    ni = SERVER_TYPES[nm]
+                    btn_f.configure(fg_color=ni["color"] if nm==n else CARD)
+                    for child in btn_f.winfo_children():
+                        child.configure(text_color="#000" if nm==n else
+                                        (TEXT if isinstance(child,ctk.CTkLabel) and
+                                         child.cget("font") and "bold" in str(child.cget("font")) else TEXT_MUTED))
+            btn_click = ctk.CTkButton(f,text="",width=0,height=0,fg_color="transparent",
+                                       hover_color="transparent",command=pick)
+            f.bind("<Button-1>", lambda _,p=pick: p())
+            for child in f.winfo_children():
+                child.bind("<Button-1>", lambda _,p=pick: p())
+            self._sw_btns[name] = (f, pick)
 
-        ver_f = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=10)
+        ver_f = ctk.CTkFrame(scroll, fg_color=SIDEBAR_BG, corner_radius=10)
         ver_f.pack(fill="x", pady=12)
-        ctk.CTkLabel(ver_f, text="Version", text_color=TEXT_SEC,
-                     font=ctk.CTkFont("Segoe UI",12)).pack(padx=14, pady=(10,2), anchor="w")
-        self._sw_ver = ctk.StringVar(value=self.server_cfg.get("mc_version","1.21.4"))
-        ctk.CTkOptionMenu(ver_f, variable=self._sw_ver,
-                           values=["1.21.4","1.21.1","1.20.4","1.20.1","1.19.4"],
-                           fg_color=BG_CARD, button_color=ACCENT_BLUE
-                           ).pack(padx=14, pady=(0,12), fill="x")
+        ctk.CTkLabel(ver_f,text="Version",text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11,"bold")).pack(padx=14,pady=(10,2),anchor="w")
+        self._sw_ver = ctk.StringVar(value=self.cfg.get("mc_version","1.21.4"))
+        ctk.CTkOptionMenu(ver_f,variable=self._sw_ver,values=MC_VERSIONS,
+                           fg_color=CARD,button_color=BLUE,text_color=TEXT,
+                           font=ctk.CTkFont("Segoe UI",13)
+                           ).pack(padx=14,pady=(0,12),fill="x")
 
-        self._sw_lbl = ctk.CTkLabel(scroll, text="", text_color=TEXT_SEC,
+        self._sw_lbl = ctk.CTkLabel(scroll,text="",text_color=TEXT_MUTED,
                                      font=ctk.CTkFont("Segoe UI",11))
         self._sw_lbl.pack()
-        ctk.CTkButton(scroll, text="Übernehmen & JAR aktualisieren",
-                      fg_color=ACCENT_BLUE, text_color="#fff",
-                      font=ctk.CTkFont("Segoe UI",13,"bold"), height=44,
-                      command=self._apply_software).pack(fill="x", pady=8)
-        self._selected_sw = cur
+        ctk.CTkButton(scroll,text="Ändern",fg_color=GREEN,hover_color=GREEN_HOV,
+                      text_color="#000",font=ctk.CTkFont("Segoe UI",13,"bold"),height=44,
+                      command=self._apply_sw).pack(fill="x",pady=8)
 
-    def _pick_software(self, name):
-        self._selected_sw = name
-        cur_info = SERVER_TYPES[name]
-        for n, btn in self._sw_btns.items():
-            info = SERVER_TYPES[n]
-            if n == name: btn.configure(fg_color=info["color"], text_color="#000")
-            else: btn.configure(fg_color=BG_CARD, text_color=TEXT_PRI)
-
-    def _apply_software(self):
-        name = self._selected_sw
-        ver  = self._sw_ver.get()
-        self.server_cfg["server_type_label"] = name
-        self.server_cfg["type"] = SERVER_TYPES[name]["tag"]
-        self.server_cfg["mc_version"] = ver
-        save_server_cfg(self.server_name, self.server_cfg)
-        self._sw_lbl.configure(text="Lade neue JAR…", text_color=ACCENT)
+    def _apply_sw(self):
+        name = self._sel_sw; ver = self._sw_ver.get()
+        self.cfg["type_label"]=name; self.cfg["type"]=SERVER_TYPES[name]["tag"]
+        self.cfg["mc_version"]=ver
+        save_server_cfg(self.server_name, self.cfg)
+        self._sw_lbl.configure(text="Lade neue JAR…",text_color=GREEN)
         def dl():
             info = SERVER_TYPES[name]
-            if info["tag"] in ("paper","spigot","folia","purpur","arclight"):
-                url = get_paper_url(ver) or VANILLA_VERSIONS.get(ver)
-            else:
-                url = VANILLA_VERSIONS.get(ver)
+            url = get_paper_url(ver) if info["tag"] in ("paper","spigot","folia","purpur","arclight") else None
+            url = url or VANILLA_JARS.get(ver)
             if url:
-                srv_dir = Path(self.server_cfg["dir"])
+                srv_dir = Path(self.cfg["dir"])
                 jar = srv_dir/"server.jar"
                 if jar.exists(): jar.rename(srv_dir/"server.jar.bak")
-                r = requests.get(url, stream=True, timeout=90)
+                r=requests.get(url,stream=True,timeout=120)
                 with open(str(jar),"wb") as fh:
                     for chunk in r.iter_content(8192): fh.write(chunk)
-            self._sw_lbl.configure(text="Fertig! Bitte Server neu starten.", text_color=ACCENT)
-        threading.Thread(target=dl, daemon=True).start()
+            self._sw_lbl.configure(text="Fertig! Server neu starten.",text_color=GREEN)
+        threading.Thread(target=dl,daemon=True).start()
 
-    # ── PLUGINS ───────────────────────────────────────────────────────────────
-    def _page_plugins(self):
-        self._file_page("Plugins", "plugins",
-                        "Lege hier deine Plugin-.jar-Dateien ab.",
-                        "🧩 Plugins")
-
-    # ── DATEIEN ───────────────────────────────────────────────────────────────
-    def _page_files(self):
-        ctk.CTkLabel(self.main_frame, text="📁 Dateien & Mods",
-                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT_PRI
-                     ).pack(pady=(16,4), padx=20, anchor="w")
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE: PLUGINS
+    # ═════════════════════════════════════════════════════════════════════════
+    def _p_plugins(self):
+        self._page_header("Plugins")
+        self.content.grid_rowconfigure(1, weight=1)
         if not self.server_name:
-            ctk.CTkLabel(self.main_frame, text="Kein Server.", text_color=TEXT_SEC).pack(); return
+            ctk.CTkLabel(self.content,text="Kein Server.",text_color=TEXT_MUTED).grid(row=1,column=0); return
+        folder = Path(self.cfg.get("dir",""))/"plugins"
+        self._file_manager(folder, "Plugin (.jar)")
 
-        tabs = self._make_tabs(self.main_frame, ["Mods","Resourcepacks","Datapacks","Alle Dateien"])
-        srv_dir = SERVERS_DIR / self.server_name
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE: DATEIEN
+    # ═════════════════════════════════════════════════════════════════════════
+    def _p_files(self):
+        self._page_header("Dateien")
+        self.content.grid_rowconfigure(1, weight=1)
+        if not self.server_name:
+            ctk.CTkLabel(self.content,text="Kein Server.",text_color=TEXT_MUTED).grid(row=1,column=0); return
 
-        for folder_name, tab_name in [("mods","Mods"),("resourcepacks","Resourcepacks"),
-                                       ("datapacks","Datapacks")]:
-            self._folder_tab(tabs, tab_name, srv_dir/folder_name)
-
+        tabs = self._tabs(["Mods","Resourcepacks","Datapacks","Alle Dateien"])
+        tabs.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,16))
+        srv_dir = Path(self.cfg.get("dir",""))
+        for folder, tab in [("mods","Mods"),("resourcepacks","Resourcepacks"),("datapacks","Datapacks")]:
+            t = tabs.tab(tab)
+            t.grid_columnconfigure(0,weight=1); t.grid_rowconfigure(0,weight=1)
+            self._folder_tab_inner(t, srv_dir/folder)
         # Alle Dateien
-        tab = tabs.tab("Alle Dateien")
-        tab.grid_columnconfigure(0, weight=1); tab.grid_rowconfigure(0, weight=1)
-        box = ctk.CTkTextbox(tab, fg_color=BG_CARD, text_color=TEXT_PRI,
-                              font=ctk.CTkFont("Consolas",11))
-        box.grid(row=0, column=0, sticky="nsew", pady=(0,8))
+        t = tabs.tab("Alle Dateien")
+        t.grid_columnconfigure(0,weight=1); t.grid_rowconfigure(0,weight=1)
+        box = ctk.CTkTextbox(t,fg_color=CARD,text_color=TEXT,font=ctk.CTkFont("Consolas",11))
+        box.grid(row=0,column=0,sticky="nsew",pady=(0,8))
         try:
-            for item in sorted(srv_dir.iterdir()):
-                box.insert("end", f"{'[DIR] ' if item.is_dir() else '[   ] '}{item.name}\n")
+            for it in sorted(srv_dir.iterdir()):
+                box.insert("end",f"{'[D]' if it.is_dir() else '[F]'} {it.name}\n")
         except: pass
         box.configure(state="disabled")
-        ctk.CTkButton(tab, text="Im Explorer öffnen", fg_color=BG_CARD, text_color=TEXT_PRI,
-                      height=34, command=lambda: os.startfile(str(srv_dir))
-                      ).grid(row=1, column=0, sticky="ew")
+        ctk.CTkButton(t,text="Im Explorer öffnen",fg_color=CARD,text_color=TEXT,
+                      height=34,command=lambda:os.startfile(str(srv_dir))
+                      ).grid(row=1,column=0,sticky="ew")
 
-    def _file_page(self, title, folder, desc, icon=""):
-        ctk.CTkLabel(self.main_frame, text=f"{icon}  {title}",
-                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT_PRI
-                     ).pack(pady=(16,2), padx=20, anchor="w")
-        ctk.CTkLabel(self.main_frame, text=desc, text_color=TEXT_SEC,
-                     font=ctk.CTkFont("Segoe UI",12)).pack(padx=20, anchor="w", pady=(0,10))
-        if not self.server_name:
-            ctk.CTkLabel(self.main_frame, text="Kein Server.", text_color=TEXT_SEC).pack(); return
-
-        tabs = self._make_tabs(self.main_frame, [title])
-        self._folder_tab(tabs, title, SERVERS_DIR/self.server_name/folder)
-
-    def _folder_tab(self, tabs, tab_name, folder_path):
-        folder_path = Path(folder_path)
-        folder_path.mkdir(exist_ok=True)
-        tab = tabs.tab(tab_name)
-        tab.grid_columnconfigure(0, weight=1); tab.grid_rowconfigure(0, weight=1)
-        box = ctk.CTkTextbox(tab, fg_color=BG_CARD, text_color=TEXT_PRI,
-                              font=ctk.CTkFont("Segoe UI",12))
-        box.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0,8))
-
+    def _file_manager(self, folder, file_type="Datei"):
+        folder = Path(folder); folder.mkdir(parents=True, exist_ok=True)
+        frame = ctk.CTkFrame(self.content, fg_color=SIDEBAR_BG, corner_radius=10)
+        frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,16))
+        frame.grid_columnconfigure(0,weight=1); frame.grid_rowconfigure(0,weight=1)
+        box = ctk.CTkTextbox(frame, fg_color=CARD, text_color=TEXT, font=ctk.CTkFont("Segoe UI",12))
+        box.grid(row=0,column=0,sticky="nsew",padx=12,pady=(12,8))
         def refresh():
             box.configure(state="normal"); box.delete("1.0","end")
-            files = list(folder_path.iterdir())
-            if files:
-                for f in sorted(files):
-                    box.insert("end", f"{'📁' if f.is_dir() else '📄'} {f.name}\n")
-            else: box.insert("end","(Leer)")
+            fs = list(folder.iterdir())
+            for f in sorted(fs): box.insert("end",f"📄 {f.name}\n")
+            if not fs: box.insert("end","(Leer)")
             box.configure(state="disabled")
-
         refresh()
-        ctk.CTkButton(tab, text="+ Hinzufügen", fg_color=ACCENT_BLUE, text_color="#fff",
-                      height=34, command=lambda: [
-                          [shutil.copy(s, folder_path/Path(s).name)
+        btn_row = ctk.CTkFrame(frame,fg_color="transparent")
+        btn_row.grid(row=1,column=0,padx=12,pady=(0,12),sticky="ew")
+        ctk.CTkButton(btn_row,text=f"+ {file_type} hinzufügen",
+                      fg_color=GREEN,hover_color=GREEN_HOV,text_color="#000",height=36,
+                      command=lambda:[
+                          [shutil.copy(s,folder/Path(s).name)
                            for s in filedialog.askopenfilenames(title="Dateien hinzufügen")],
                           refresh()
-                      ]).grid(row=1, column=0, sticky="ew", padx=(0,8))
-        ctk.CTkButton(tab, text="Ordner öffnen", fg_color=BG_CARD, text_color=TEXT_PRI,
-                      height=34, command=lambda: os.startfile(str(folder_path))
-                      ).grid(row=1, column=1)
+                      ]).pack(side="left",padx=(0,8))
+        ctk.CTkButton(btn_row,text="Ordner öffnen",fg_color=CARD,text_color=TEXT,height=36,
+                      command=lambda:os.startfile(str(folder))).pack(side="left")
 
-    # ── WELTEN ────────────────────────────────────────────────────────────────
-    def _page_worlds(self):
-        ctk.CTkLabel(self.main_frame, text="🌍 Welten",
-                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT_PRI
-                     ).pack(pady=(16,4), padx=20, anchor="w")
-        ctk.CTkLabel(self.main_frame, text="Verwalte alle Welten deines Servers.",
-                     text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",12)
-                     ).pack(padx=20, anchor="w", pady=(0,12))
+    def _folder_tab_inner(self, parent, folder):
+        folder = Path(folder); folder.mkdir(parents=True, exist_ok=True)
+        box = ctk.CTkTextbox(parent,fg_color=CARD,text_color=TEXT,font=ctk.CTkFont("Segoe UI",12))
+        box.grid(row=0,column=0,columnspan=2,sticky="nsew",pady=(0,8))
+        def refresh():
+            box.configure(state="normal"); box.delete("1.0","end")
+            fs=list(folder.iterdir())
+            for f in sorted(fs): box.insert("end",f"📄 {f.name}\n")
+            if not fs: box.insert("end","(Leer)")
+            box.configure(state="disabled")
+        refresh()
+        ctk.CTkButton(parent,text="+ Hinzufügen",fg_color=GREEN,hover_color=GREEN_HOV,
+                      text_color="#000",height=32,
+                      command=lambda:[
+                          [shutil.copy(s,folder/Path(s).name) for s in filedialog.askopenfilenames()],
+                          refresh()
+                      ]).grid(row=1,column=0,sticky="ew",padx=(0,8))
+        ctk.CTkButton(parent,text="Öffnen",fg_color=CARD,text_color=TEXT,height=32,
+                      command=lambda:os.startfile(str(folder))).grid(row=1,column=1)
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE: WELTEN
+    # ═════════════════════════════════════════════════════════════════════════
+    def _p_worlds(self):
+        self._page_header("Welten")
+        self.content.grid_rowconfigure(1, weight=1)
         if not self.server_name:
-            ctk.CTkLabel(self.main_frame, text="Kein Server.", text_color=TEXT_SEC).pack(); return
+            ctk.CTkLabel(self.content,text="Kein Server.",text_color=TEXT_MUTED).grid(row=1,column=0); return
 
-        srv_dir = SERVERS_DIR / self.server_name
-        scroll  = ctk.CTkScrollableFrame(self.main_frame, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=20, pady=(0,16))
+        srv_dir = Path(self.cfg.get("dir",""))
+        scroll = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
+        scroll.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,16))
 
-        # Suche nach Weltordnern: enthalten level.dat
-        world_dirs = []
-        for d in srv_dir.iterdir():
-            if d.is_dir() and (d/"level.dat").exists():
-                world_dirs.append(d)
+        DIM = {"world":("Overworld","🌱"),
+               "world_nether":("Nether","🔥"),
+               "world_the_end":("The End","🌌")}
 
-        # Dimensionen-Map
-        DIM_NAMES = {
-            "world": ("Overworld","🌱"),
-            "world_nether": ("Nether","🔥"),
-            "world_the_end": ("The End","🌌"),
-        }
-
-        if not world_dirs:
-            ctk.CTkLabel(scroll, text="Keine Welten gefunden. Starte den Server einmal, um Welten zu generieren.",
-                         text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",12),
-                         wraplength=500).pack(pady=20)
+        worlds = [d for d in srv_dir.iterdir() if d.is_dir() and (d/"level.dat").exists()]
+        if not worlds:
+            ctk.CTkLabel(scroll,
+                text="Keine Welten gefunden.\nStarte den Server einmal, um Welten zu generieren.",
+                text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",13),wraplength=500).pack(pady=30)
         else:
-            for world in sorted(world_dirs):
-                dim_name, icon = DIM_NAMES.get(world.name, (world.name, "🗺"))
-                size_mb = sum(f.stat().st_size for f in world.rglob("*") if f.is_file()) / 1e6
+            for w in sorted(worlds):
+                dim_name,icon = DIM.get(w.name,(w.name,"🗺"))
+                size_mb = sum(f.stat().st_size for f in w.rglob("*") if f.is_file())/1e6
+                card = ctk.CTkFrame(scroll,fg_color=SIDEBAR_BG,corner_radius=10)
+                card.pack(fill="x",pady=4)
+                card.grid_columnconfigure(1,weight=1)
+                ctk.CTkLabel(card,text=icon,font=ctk.CTkFont("Segoe UI",28)
+                             ).grid(row=0,column=0,rowspan=2,padx=16,pady=12)
+                ctk.CTkLabel(card,text=dim_name,font=ctk.CTkFont("Segoe UI",14,"bold"),
+                             text_color=TEXT,anchor="w").grid(row=0,column=1,sticky="w",pady=(10,0))
+                ctk.CTkLabel(card,text=f"{w.name}  •  {size_mb:.1f} MB",
+                             text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",11),anchor="w"
+                             ).grid(row=1,column=1,sticky="w",pady=(0,10))
+                bf = ctk.CTkFrame(card,fg_color="transparent")
+                bf.grid(row=0,column=2,rowspan=2,padx=12)
+                ctk.CTkButton(bf,text="Öffnen",fg_color=CARD,text_color=TEXT,width=80,height=28,
+                              command=lambda p=w:os.startfile(str(p))).pack(pady=2)
+                ctk.CTkButton(bf,text="Backup",fg_color=BLUE,text_color="#fff",width=80,height=28,
+                              command=lambda p=w,n=dim_name:self._bkp_world(p,n)).pack(pady=2)
+                ctk.CTkButton(bf,text="Löschen",fg_color=RED,text_color="#fff",width=80,height=28,
+                              command=lambda p=w,n=dim_name:self._del_world(p,n)).pack(pady=2)
 
-                card = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=12)
-                card.pack(fill="x", pady=5)
-                card.grid_columnconfigure(1, weight=1)
+        act = ctk.CTkFrame(scroll,fg_color=SIDEBAR_BG,corner_radius=10)
+        act.pack(fill="x",pady=8)
+        r = ctk.CTkFrame(act,fg_color="transparent")
+        r.pack(padx=14,pady=12,fill="x")
+        ctk.CTkButton(r,text="Welt importieren (.zip)",fg_color=CARD,text_color=TEXT,height=36,
+                      command=lambda:self._import_world(srv_dir)).pack(side="left",padx=(0,8))
+        ctk.CTkButton(r,text="Seed abrufen",fg_color=CARD,text_color=TEXT,height=36,
+                      command=self._get_seed).pack(side="left")
 
-                ctk.CTkLabel(card, text=icon, font=ctk.CTkFont("Segoe UI",28)
-                             ).grid(row=0, column=0, rowspan=2, padx=16, pady=12)
-                ctk.CTkLabel(card, text=dim_name,
-                             font=ctk.CTkFont("Segoe UI",15,"bold"), text_color=TEXT_PRI,
-                             anchor="w").grid(row=0, column=1, sticky="w", pady=(10,0))
-                ctk.CTkLabel(card, text=f"{world.name}  •  {size_mb:.1f} MB",
-                             text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",11),
-                             anchor="w").grid(row=1, column=1, sticky="w", pady=(0,10))
+    def _bkp_world(self,path,name):
+        d=APP_DIR/"world_backups"; d.mkdir(exist_ok=True)
+        ts=time.strftime("%Y%m%d_%H%M%S"); out=d/f"{name}_{ts}"
+        threading.Thread(target=lambda:shutil.make_archive(str(out),"zip",str(path.parent),path.name),daemon=True).start()
+        messagebox.showinfo("Backup",f"Backup wird erstellt:\n{out}.zip")
 
-                btns = ctk.CTkFrame(card, fg_color="transparent")
-                btns.grid(row=0, column=2, rowspan=2, padx=10)
+    def _del_world(self,path,name):
+        if messagebox.askyesno("Löschen",f"'{name}' wirklich löschen? Nicht rückgängig!"):
+            shutil.rmtree(path,ignore_errors=True); self._p_worlds()
 
-                ctk.CTkButton(btns, text="Öffnen", fg_color=BG_CARD, text_color=TEXT_PRI,
-                              width=80, height=30,
-                              command=lambda p=world: os.startfile(str(p))
-                              ).pack(pady=2)
-                ctk.CTkButton(btns, text="Backup", fg_color=ACCENT_BLUE, text_color="#fff",
-                              width=80, height=30,
-                              command=lambda p=world, n=dim_name: self._backup_world(p, n)
-                              ).pack(pady=2)
-                ctk.CTkButton(btns, text="Löschen", fg_color=ACCENT_RED, text_color="#fff",
-                              width=80, height=30,
-                              command=lambda p=world, n=dim_name: self._delete_world(p, n)
-                              ).pack(pady=2)
-
-        # Welt zurücksetzen / importieren
-        act_frame = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=10)
-        act_frame.pack(fill="x", pady=8)
-        ctk.CTkLabel(act_frame, text="Aktionen", text_color=TEXT_SEC,
-                     font=ctk.CTkFont("Segoe UI",12,"bold")).pack(padx=14, pady=(10,4), anchor="w")
-        row = ctk.CTkFrame(act_frame, fg_color="transparent")
-        row.pack(padx=14, pady=(0,10), fill="x")
-        ctk.CTkButton(row, text="Welt importieren (.zip)", fg_color=BG_CARD, text_color=TEXT_PRI,
-                      height=36, command=lambda: self._import_world(srv_dir)).pack(side="left", padx=(0,8))
-        ctk.CTkButton(row, text="Seed abrufen", fg_color=BG_CARD, text_color=TEXT_PRI,
-                      height=36, command=self._get_seed).pack(side="left")
-
-    def _backup_world(self, world_path, name):
-        backup_dir = APP_DIR / "world_backups"
-        backup_dir.mkdir(exist_ok=True)
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        out = backup_dir / f"{name}_{ts}.zip"
-        threading.Thread(
-            target=lambda: shutil.make_archive(str(out.with_suffix("")), "zip", str(world_path.parent), world_path.name),
-            daemon=True
-        ).start()
-        messagebox.showinfo("Backup", f"Backup wird erstellt:\n{out}")
-
-    def _delete_world(self, world_path, name):
-        if messagebox.askyesno("Welt löschen", f"'{name}' wirklich löschen?\nDiese Aktion kann nicht rückgängig gemacht werden!"):
-            shutil.rmtree(world_path, ignore_errors=True)
-            self._show_page("worlds")
-
-    def _import_world(self, srv_dir):
-        path = filedialog.askopenfilename(title="Welt importieren", filetypes=[("ZIP","*.zip")])
-        if path:
-            shutil.unpack_archive(path, str(srv_dir))
-            messagebox.showinfo("Import","Welt importiert.")
-            self._show_page("worlds")
+    def _import_world(self,srv_dir):
+        p=filedialog.askopenfilename(title="Welt importieren",filetypes=[("ZIP","*.zip")])
+        if p: shutil.unpack_archive(p,str(srv_dir)); messagebox.showinfo("Import","Welt importiert."); self._p_worlds()
 
     def _get_seed(self):
         if self.proc and self.proc.poll() is None:
-            try:
-                self.proc.stdin.write("seed\n"); self.proc.stdin.flush()
-                messagebox.showinfo("Seed","Seed-Befehl gesendet. Sieh in der Konsole nach.")
+            try: self.proc.stdin.write("seed\n"); self.proc.stdin.flush()
             except: pass
+            messagebox.showinfo("Seed","Seed-Befehl gesendet — sieh in der Konsole nach.")
         else:
-            messagebox.showinfo("Seed","Server starten, dann Seed über Konsole abrufen.")
+            messagebox.showinfo("Seed","Server starten und dann Seed über Konsole abrufen.")
 
-    # ── BACKUPS ───────────────────────────────────────────────────────────────
-    def _page_backups(self):
-        ctk.CTkLabel(self.main_frame, text="🔒 Backups",
-                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT_PRI
-                     ).pack(pady=(16,4), padx=20, anchor="w")
-        ctk.CTkLabel(self.main_frame, text="Erstelle lokale oder Cloud-Backups deines Servers.",
-                     text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",12)
-                     ).pack(padx=20, anchor="w", pady=(0,12))
-
-        scroll = ctk.CTkScrollableFrame(self.main_frame, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=20, pady=(0,16))
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE: BACKUPS
+    # ═════════════════════════════════════════════════════════════════════════
+    def _p_backups(self):
+        self._page_header("Backups")
+        self.content.grid_rowconfigure(1, weight=1)
+        scroll = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
+        scroll.grid(row=1,column=0,sticky="nsew",padx=20,pady=(0,16))
 
         # Lokales Backup
-        loc = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=12)
-        loc.pack(fill="x", pady=6)
-        ctk.CTkLabel(loc, text="💾  Lokales Backup", text_color=TEXT_PRI,
-                     font=ctk.CTkFont("Segoe UI",14,"bold")).pack(padx=16, pady=(12,4), anchor="w")
-        ctk.CTkLabel(loc, text="Erstellt ein ZIP-Archiv des gesamten Server-Ordners.",
-                     text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",11)
-                     ).pack(padx=16, anchor="w")
-
-        bkp_dir_var = ctk.StringVar(value=str(APP_DIR/"backups"))
-        row = ctk.CTkFrame(loc, fg_color="transparent")
-        row.pack(padx=16, pady=(8,4), fill="x")
-        row.grid_columnconfigure(0, weight=1)
-        ctk.CTkEntry(row, textvariable=bkp_dir_var, fg_color=BG_CARD,
-                     border_color=ACCENT_BLUE).grid(row=0, column=0, sticky="ew", padx=(0,8))
-        ctk.CTkButton(row, text="Durchsuchen…", fg_color=BG_CARD, text_color=TEXT_PRI,
-                      width=110, command=lambda: bkp_dir_var.set(
-                          filedialog.askdirectory() or bkp_dir_var.get())
-                      ).grid(row=0, column=1)
-
-        self._bkp_lbl = ctk.CTkLabel(loc, text="", text_color=TEXT_SEC,
-                                      font=ctk.CTkFont("Segoe UI",11))
-        self._bkp_lbl.pack(padx=16)
-
-        def local_backup():
+        s1 = self._card(scroll, "💾  Lokales Backup",
+                        "Erstellt ein ZIP des gesamten Server-Ordners.")
+        bkp_dir_v = ctk.StringVar(value=str(APP_DIR/"backups"))
+        r = ctk.CTkFrame(s1,fg_color="transparent"); r.pack(padx=16,pady=(4,4),fill="x")
+        r.grid_columnconfigure(0,weight=1)
+        ctk.CTkEntry(r,textvariable=bkp_dir_v,fg_color=CARD,border_color=BORDER,text_color=TEXT
+                     ).grid(row=0,column=0,sticky="ew",padx=(0,8))
+        ctk.CTkButton(r,text="…",fg_color=CARD,text_color=TEXT,width=36,
+                      command=lambda:bkp_dir_v.set(filedialog.askdirectory() or bkp_dir_v.get())
+                      ).grid(row=0,column=1)
+        lbl1=ctk.CTkLabel(s1,text="",text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",11))
+        lbl1.pack(padx=16)
+        def local_bkp():
             if not self.server_name: return
-            out_dir = Path(bkp_dir_var.get())
-            out_dir.mkdir(parents=True, exist_ok=True)
-            ts  = time.strftime("%Y%m%d_%H%M%S")
-            out = out_dir / f"{self.server_name}_{ts}"
-            self._bkp_lbl.configure(text="Backup läuft…", text_color=ACCENT)
+            out=Path(bkp_dir_v.get()); out.mkdir(parents=True,exist_ok=True)
+            ts=time.strftime("%Y%m%d_%H%M%S"); name=f"{self.server_name}_{ts}"
+            lbl1.configure(text="Backup läuft…",text_color=GREEN)
             def do():
-                shutil.make_archive(str(out), "zip", str(SERVERS_DIR/self.server_name))
-                self._bkp_lbl.configure(text=f"Fertig: {out}.zip", text_color=ACCENT)
-                self._page_backups()
-            threading.Thread(target=do, daemon=True).start()
+                shutil.make_archive(str(out/name),"zip",str(SERVERS_DIR/self.server_name))
+                lbl1.configure(text=f"Fertig: {out/name}.zip",text_color=GREEN)
+                self._p_backups()
+            threading.Thread(target=do,daemon=True).start()
+        ctk.CTkButton(s1,text="Backup erstellen",fg_color=GREEN,hover_color=GREEN_HOV,
+                      text_color="#000",font=ctk.CTkFont("Segoe UI",13,"bold"),height=42,
+                      command=local_bkp).pack(padx=16,pady=(4,14),fill="x")
 
-        ctk.CTkButton(loc, text="Lokales Backup erstellen", fg_color=ACCENT,
-                      text_color="#000", hover_color="#00a846",
-                      font=ctk.CTkFont("Segoe UI",13,"bold"), height=42,
-                      command=local_backup).pack(padx=16, pady=(4,14), fill="x")
-
-        # Google Cloud Backup
-        gcs = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=12)
-        gcs.pack(fill="x", pady=6)
-        ctk.CTkLabel(gcs, text="☁  Google Cloud Storage Backup",
-                     text_color=TEXT_PRI, font=ctk.CTkFont("Segoe UI",14,"bold")
-                     ).pack(padx=16, pady=(12,4), anchor="w")
-        ctk.CTkLabel(gcs, text="Lade Backups automatisch in einen Google Cloud Storage Bucket hoch.",
-                     text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",11), wraplength=480
-                     ).pack(padx=16, anchor="w")
-
-        def gcs_entry(label, ph, pw=False):
-            ctk.CTkLabel(gcs, text=label, text_color=TEXT_SEC,
-                         font=ctk.CTkFont("Segoe UI",11)).pack(padx=16, pady=(8,0), anchor="w")
-            e = ctk.CTkEntry(gcs, placeholder_text=ph, fg_color=BG_CARD,
-                              border_color=ACCENT_BLUE, show="•" if pw else "")
-            e.pack(padx=16, pady=(2,0), fill="x")
-            return e
-
-        self._gcs_bucket = gcs_entry("Bucket-Name", "mein-minecraft-backup")
-        self._gcs_prefix = gcs_entry("Ordner-Präfix (optional)", "backups/")
-        self._gcs_key    = gcs_entry("Pfad zur Service-Account-JSON", "/pfad/zu/key.json")
-
-        key_row = ctk.CTkFrame(gcs, fg_color="transparent")
-        key_row.pack(padx=16, pady=(4,0), fill="x")
-        ctk.CTkButton(key_row, text="JSON auswählen…", fg_color=BG_CARD, text_color=TEXT_PRI,
-                      height=32, command=lambda: self._gcs_key.delete(0,"end") or
-                          self._gcs_key.insert(0, filedialog.askopenfilename(
-                              filetypes=[("JSON","*.json")]) or "")
-                      ).pack(side="left")
-
-        self._gcs_lbl = ctk.CTkLabel(gcs, text="", text_color=TEXT_SEC,
-                                      font=ctk.CTkFont("Segoe UI",11))
-        self._gcs_lbl.pack(padx=16)
-
-        def cloud_backup():
-            bucket = self._gcs_bucket.get().strip()
-            prefix = self._gcs_prefix.get().strip()
-            key    = self._gcs_key.get().strip()
+        # Google Cloud
+        s2 = self._card(scroll, "☁  Google Cloud Storage",
+                        "Lade Backups automatisch in einen GCS-Bucket hoch.")
+        def gf(parent, lbl, ph, pw=False):
+            ctk.CTkLabel(parent,text=lbl,text_color=TEXT_MUTED,
+                         font=ctk.CTkFont("Segoe UI",10)).pack(padx=16,pady=(8,0),anchor="w")
+            e=ctk.CTkEntry(parent,placeholder_text=ph,fg_color=CARD,border_color=BORDER,
+                            text_color=TEXT,show="•" if pw else "")
+            e.pack(padx=16,pady=(2,0),fill="x"); return e
+        self._gcs_bucket=gf(s2,"Bucket-Name","mein-server-backup")
+        self._gcs_prefix=gf(s2,"Ordner-Präfix","backups/")
+        self._gcs_key   =gf(s2,"Service-Account JSON","/pfad/zu/key.json")
+        ctk.CTkButton(s2,text="JSON auswählen",fg_color=CARD,text_color=TEXT,height=30,
+                      command=lambda:self._gcs_key.delete(0,"end") or
+                          self._gcs_key.insert(0,filedialog.askopenfilename(filetypes=[("JSON","*.json")]) or "")
+                      ).pack(padx=16,pady=4,anchor="w")
+        lbl2=ctk.CTkLabel(s2,text="",text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",11)); lbl2.pack(padx=16)
+        def cloud_bkp():
+            bucket=self._gcs_bucket.get().strip(); key=self._gcs_key.get().strip()
+            prefix=self._gcs_prefix.get().strip()
             if not bucket or not key:
-                self._gcs_lbl.configure(text="Bitte Bucket und Key-Datei angeben.", text_color=ACCENT_RED)
-                return
-            self._gcs_lbl.configure(text="Upload läuft…", text_color=ACCENT)
+                lbl2.configure(text="Bitte Bucket und Key angeben.",text_color=RED); return
+            lbl2.configure(text="Upload läuft…",text_color=GREEN)
             def do():
                 try:
-                    from google.cloud import storage
-                    import os
-                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key
-                    client = storage.Client()
-                    bkt    = client.bucket(bucket)
-                    ts     = time.strftime("%Y%m%d_%H%M%S")
-                    zip_path = APP_DIR / f"tmp_{ts}.zip"
-                    shutil.make_archive(str(zip_path.with_suffix("")), "zip",
-                                        str(SERVERS_DIR/self.server_name))
-                    blob_name = f"{prefix}{self.server_name}_{ts}.zip"
-                    bkt.blob(blob_name).upload_from_filename(str(zip_path))
-                    zip_path.unlink(missing_ok=True)
-                    self._gcs_lbl.configure(text=f"Hochgeladen: gs://{bucket}/{blob_name}", text_color=ACCENT)
+                    from google.cloud import storage; import os as _os
+                    _os.environ["GOOGLE_APPLICATION_CREDENTIALS"]=key
+                    client=storage.Client(); bkt=client.bucket(bucket)
+                    ts=time.strftime("%Y%m%d_%H%M%S"); zp=APP_DIR/f"tmp_{ts}.zip"
+                    shutil.make_archive(str(zp.with_suffix("")),"zip",str(SERVERS_DIR/self.server_name))
+                    bn=f"{prefix}{self.server_name}_{ts}.zip"
+                    bkt.blob(bn).upload_from_filename(str(zp)); zp.unlink(missing_ok=True)
+                    lbl2.configure(text=f"Hochgeladen: gs://{bucket}/{bn}",text_color=GREEN)
                 except ImportError:
-                    self._gcs_lbl.configure(
-                        text="Bitte installieren: pip install google-cloud-storage", text_color=ACCENT_RED)
+                    lbl2.configure(text="pip install google-cloud-storage",text_color=RED)
                 except Exception as e:
-                    self._gcs_lbl.configure(text=f"Fehler: {e}", text_color=ACCENT_RED)
-            threading.Thread(target=do, daemon=True).start()
+                    lbl2.configure(text=f"Fehler: {e}",text_color=RED)
+            threading.Thread(target=do,daemon=True).start()
+        ctk.CTkButton(s2,text="In Cloud hochladen",fg_color=BLUE,text_color="#fff",
+                      font=ctk.CTkFont("Segoe UI",13,"bold"),height=42,
+                      command=cloud_bkp).pack(padx=16,pady=(4,14),fill="x")
 
-        ctk.CTkButton(gcs, text="In Cloud hochladen", fg_color=ACCENT_BLUE, text_color="#fff",
-                      font=ctk.CTkFont("Segoe UI",13,"bold"), height=42,
-                      command=cloud_backup).pack(padx=16, pady=(4,14), fill="x")
-
-        # Vorhandene Backups auflisten
-        bkp_list = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=12)
-        bkp_list.pack(fill="x", pady=6)
-        ctk.CTkLabel(bkp_list, text="Vorhandene Backups", text_color=TEXT_PRI,
-                     font=ctk.CTkFont("Segoe UI",13,"bold")).pack(padx=16, pady=(10,6), anchor="w")
-        bkp_dir = APP_DIR/"backups"
-        bkp_dir.mkdir(exist_ok=True)
-        zips = sorted(bkp_dir.glob("*.zip"), reverse=True)
+        # Vorhandene Backups
+        s3=self._card(scroll,"Vorhandene Backups","")
+        bkp_dir=APP_DIR/"backups"; bkp_dir.mkdir(exist_ok=True)
+        zips=sorted(bkp_dir.glob("*.zip"),reverse=True)
         if zips:
             for z in zips[:10]:
-                row2 = ctk.CTkFrame(bkp_list, fg_color=BG_CARD, corner_radius=8)
-                row2.pack(padx=16, pady=2, fill="x")
-                size_mb = z.stat().st_size/1e6
-                ctk.CTkLabel(row2, text=z.name, text_color=TEXT_PRI,
-                             font=ctk.CTkFont("Segoe UI",11)).pack(side="left", padx=10, pady=6)
-                ctk.CTkLabel(row2, text=f"{size_mb:.1f} MB", text_color=TEXT_SEC,
-                             font=ctk.CTkFont("Segoe UI",10)).pack(side="right", padx=10)
+                r2=ctk.CTkFrame(s3,fg_color=CARD,corner_radius=6)
+                r2.pack(padx=16,pady=2,fill="x")
+                ctk.CTkLabel(r2,text=z.name,text_color=TEXT,font=ctk.CTkFont("Segoe UI",11)
+                             ).pack(side="left",padx=10,pady=6)
+                ctk.CTkLabel(r2,text=f"{z.stat().st_size/1e6:.1f} MB",
+                             text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",10)
+                             ).pack(side="right",padx=10)
         else:
-            ctk.CTkLabel(bkp_list, text="Keine lokalen Backups gefunden.", text_color=TEXT_SEC,
-                         font=ctk.CTkFont("Segoe UI",11)).pack(padx=16, pady=(0,10))
+            ctk.CTkLabel(s3,text="Noch keine Backups.",text_color=TEXT_MUTED,
+                         font=ctk.CTkFont("Segoe UI",11)).pack(padx=16,pady=(0,10))
 
-    # ── OPTIONEN ──────────────────────────────────────────────────────────────
-    def _page_options(self):
-        ctk.CTkLabel(self.main_frame, text="⚙ Optionen",
-                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT_PRI
-                     ).pack(pady=(16,4), padx=20, anchor="w")
-        if not self.server_name:
-            ctk.CTkLabel(self.main_frame, text="Kein Server.", text_color=TEXT_SEC).pack(); return
+    # ═════════════════════════════════════════════════════════════════════════
+    # PAGE: ZUGRIFF
+    # ═════════════════════════════════════════════════════════════════════════
+    def _p_access(self):
+        self._page_header("Zugriff")
+        self.content.grid_rowconfigure(1, weight=1)
+        access = load_json(ACCESS_DB, {})
+        srv_access = access.get(self.server_name or "_", {})
+        all_users  = [u for u in load_users() if u != self.username]
 
-        srv_dir   = SERVERS_DIR/self.server_name
-        props_file= srv_dir/"server.properties"
+        scroll = ctk.CTkScrollableFrame(self.content,fg_color="transparent")
+        scroll.grid(row=1,column=0,sticky="nsew",padx=20,pady=(0,16))
 
-        def read_props():
-            if not props_file.exists(): return {}
-            d = {}
-            for line in props_file.read_text().splitlines():
-                if "=" in line and not line.startswith("#"):
-                    k,_,v = line.partition("=")
-                    d[k.strip()] = v.strip()
-            return d
-
-        props   = read_props()
-        scroll  = ctk.CTkScrollableFrame(self.main_frame, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=20, pady=(0,8))
-        widgets = {}
-
-        def bool_row(key, label, default="false"):
-            var = ctk.BooleanVar(value=props.get(key,default)=="true")
-            f = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=10)
-            f.pack(fill="x", pady=3)
-            ctk.CTkLabel(f, text=label, text_color=TEXT_PRI,
-                         font=ctk.CTkFont("Segoe UI",13)).pack(side="left", padx=14, pady=10)
-            ctk.CTkSwitch(f, variable=var, text="", onvalue=True, offvalue=False,
-                          progress_color=ACCENT, button_color=TEXT_PRI).pack(side="right", padx=14)
-            widgets[key] = ("bool", var)
-
-        def entry_row(key, label, default=""):
-            val = props.get(key, default)
-            f = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=10)
-            f.pack(fill="x", pady=3)
-            ctk.CTkLabel(f, text=label, text_color=TEXT_PRI,
-                         font=ctk.CTkFont("Segoe UI",13)).pack(side="left", padx=14, pady=10)
-            e = ctk.CTkEntry(f, width=200, fg_color=BG_CARD, border_color=ACCENT_BLUE)
-            e.insert(0, val)
-            e.pack(side="right", padx=14, pady=8)
-            widgets[key] = ("entry", e)
-
-        def drop_row(key, label, opts, default=""):
-            var = ctk.StringVar(value=props.get(key,default))
-            f = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=10)
-            f.pack(fill="x", pady=3)
-            ctk.CTkLabel(f, text=label, text_color=TEXT_PRI,
-                         font=ctk.CTkFont("Segoe UI",13)).pack(side="left", padx=14, pady=10)
-            ctk.CTkOptionMenu(f, variable=var, values=opts, fg_color=BG_CARD,
-                               button_color=ACCENT_BLUE, width=160
-                               ).pack(side="right", padx=14, pady=8)
-            widgets[key] = ("str", var)
-
-        bool_row("online-mode",          "Online-Mode  (aus = Cracked/Offline)", "true")
-        bool_row("pvp",                  "PvP aktiviert", "true")
-        bool_row("white-list",           "Whitelist aktiviert", "false")
-        bool_row("enable-command-block", "Command Blocks", "false")
-        bool_row("allow-flight",         "Fliegen erlaubt", "false")
-        bool_row("spawn-protection",     "Spawn-Schutz", "true")
-        bool_row("force-gamemode",       "Spielmodus erzwingen", "false")
-        drop_row("difficulty",  "Schwierigkeitsgrad", ["peaceful","easy","normal","hard"], "normal")
-        drop_row("gamemode",    "Standard-Spielmodus",
-                 ["survival","creative","adventure","spectator"], "survival")
-        entry_row("max-players",   "Max. Spieler", "20")
-        entry_row("server-port",   "Port", "25565")
-        entry_row("motd",          "Server-Beschreibung (MotD)", "A Minecraft Server")
-        entry_row("view-distance", "Sichtweite (Chunks)", "10")
-        entry_row("level-name",    "Weltname", "world")
-        entry_row("level-seed",    "Welt-Seed (leer = zufällig)", "")
-        entry_row("player-idle-timeout", "Idle-Timeout (Minuten, 0=aus)", "0")
-        entry_row("resource-pack", "Ressourcenpaket URL", "")
-
-        def save_opts():
-            new = dict(props)
-            for k,(typ,w) in widgets.items():
-                new[k] = ("true" if w.get() else "false") if typ=="bool" else w.get()
-            props_file.write_text("\n".join(f"{k}={v}" for k,v in new.items())+"\n")
-            self.server_cfg["port"] = new.get("server-port","25565")
-            self.server_cfg["motd"] = new.get("motd","")
-            save_server_cfg(self.server_name, self.server_cfg)
-            messagebox.showinfo("Gespeichert","server.properties gespeichert.\nServer neu starten zum Übernehmen.")
-
-        ctk.CTkButton(self.main_frame, text="Speichern", fg_color=ACCENT, text_color="#000",
-                      hover_color="#00a846", font=ctk.CTkFont("Segoe UI",14,"bold"),
-                      height=46, command=save_opts).pack(padx=20, pady=(4,14), fill="x")
-
-    # ── ZUGRIFF ───────────────────────────────────────────────────────────────
-    def _page_access(self):
-        ctk.CTkLabel(self.main_frame, text="🔑 Zugriff verwalten",
-                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT_PRI
-                     ).pack(pady=(16,4), padx=20, anchor="w")
-        ctk.CTkLabel(self.main_frame,
-                     text="Gib anderen Benutzern Zugriff auf diesen Server und lege fest, was sie dürfen.",
-                     text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",12), wraplength=600
-                     ).pack(padx=20, anchor="w", pady=(0,12))
-
-        access_data = load_access()
-        srv_access  = access_data.get(self.server_name or "__global__", {})
-        all_users   = [u for u in load_users() if u != self.username]
-
-        scroll = ctk.CTkScrollableFrame(self.main_frame, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=20, pady=(0,8))
+        ctk.CTkLabel(scroll,
+            text="Gib anderen Benutzern Zugriff und lege fest, was sie auf diesem Server dürfen.",
+            text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",12),wraplength=700
+        ).pack(anchor="w",pady=(0,12))
 
         if not all_users:
             ctk.CTkLabel(scroll,
-                         text="Keine anderen Benutzer registriert.\nRegistriere weitere Konten, um hier Zugriff zu vergeben.",
-                         text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",12)).pack(pady=20)
+                text="Keine anderen Benutzer registriert.\nMelde dich aus und erstelle weitere Konten über 'Registrieren'.",
+                text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",12)).pack(pady=20)
         else:
             for user in all_users:
-                user_perms = srv_access.get(user, {})
-                card = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=12)
-                card.pack(fill="x", pady=6)
-                ctk.CTkLabel(card, text=f"👤  {user}",
-                             font=ctk.CTkFont("Segoe UI",14,"bold"), text_color=TEXT_PRI
-                             ).pack(padx=16, pady=(12,4), anchor="w")
-
-                perm_vars = {}
-                grid = ctk.CTkFrame(card, fg_color="transparent")
-                grid.pack(padx=16, pady=(0,4), fill="x")
-                for col_idx, (key, label) in enumerate(PERMISSIONS):
-                    r, c = divmod(col_idx, 2)
-                    pf = ctk.CTkFrame(grid, fg_color=BG_CARD, corner_radius=8)
-                    pf.grid(row=r, column=c, padx=4, pady=3, sticky="ew")
-                    grid.grid_columnconfigure(c, weight=1)
-                    var = ctk.BooleanVar(value=user_perms.get(key, False))
-                    ctk.CTkCheckBox(pf, text=label, variable=var,
-                                    text_color=TEXT_PRI, font=ctk.CTkFont("Segoe UI",11),
-                                    fg_color=ACCENT, hover_color="#00a846",
-                                    checkmark_color="#000"
-                                    ).pack(padx=10, pady=6, anchor="w")
-                    perm_vars[key] = var
-
-                def save_perms(u=user, pv=perm_vars):
-                    ad = load_access()
-                    sk = self.server_name or "__global__"
-                    if sk not in ad: ad[sk] = {}
-                    ad[sk][u] = {k: v.get() for k, v in pv.items()}
-                    save_access(ad)
-                    messagebox.showinfo("Gespeichert", f"Berechtigungen für {u} gespeichert.")
-
+                user_perms = srv_access.get(user,{})
+                card = ctk.CTkFrame(scroll,fg_color=SIDEBAR_BG,corner_radius=10)
+                card.pack(fill="x",pady=6)
+                ctk.CTkLabel(card,text=f"👤  {user}",
+                             font=ctk.CTkFont("Segoe UI",14,"bold"),text_color=TEXT
+                             ).pack(padx=16,pady=(12,4),anchor="w")
+                perm_vars={}
+                grid2=ctk.CTkFrame(card,fg_color="transparent"); grid2.pack(padx=14,fill="x")
+                for ci,(key,label) in enumerate(PERMISSIONS):
+                    r2,c2=divmod(ci,2)
+                    pf=ctk.CTkFrame(grid2,fg_color=CARD,corner_radius=8)
+                    pf.grid(row=r2,column=c2,padx=3,pady=3,sticky="ew")
+                    grid2.grid_columnconfigure(c2,weight=1)
+                    var=ctk.BooleanVar(value=user_perms.get(key,False))
+                    ctk.CTkCheckBox(pf,text=label,variable=var,
+                                    text_color=TEXT,font=ctk.CTkFont("Segoe UI",11),
+                                    fg_color=GREEN,hover_color=GREEN_HOV,
+                                    checkmark_color="#000").pack(padx=10,pady=6,anchor="w")
+                    perm_vars[key]=var
+                br=ctk.CTkFrame(card,fg_color="transparent"); br.pack(padx=16,pady=(8,12),fill="x")
+                def save_perm(u=user,pv=perm_vars):
+                    ad=load_json(ACCESS_DB,{}); sk=self.server_name or "_"
+                    if sk not in ad: ad[sk]={}
+                    ad[sk][u]={k:v.get() for k,v in pv.items()}
+                    save_json(ACCESS_DB,ad)
+                    messagebox.showinfo("Gespeichert",f"Berechtigungen für {u} gespeichert.")
                 def revoke(u=user):
-                    ad = load_access()
-                    sk = self.server_name or "__global__"
-                    if sk in ad and u in ad[sk]:
-                        del ad[sk][u]
-                        save_access(ad)
-                    self._show_page("access")
+                    ad=load_json(ACCESS_DB,{}); sk=self.server_name or "_"
+                    if sk in ad and u in ad[sk]: del ad[sk][u]; save_json(ACCESS_DB,ad)
+                    self._p_access()
+                ctk.CTkButton(br,text="Speichern",fg_color=GREEN,hover_color=GREEN_HOV,
+                              text_color="#000",height=34,width=120,command=save_perm).pack(side="left",padx=(0,8))
+                ctk.CTkButton(br,text="Zugriff entziehen",fg_color=RED,text_color="#fff",
+                              height=34,width=140,command=revoke).pack(side="left")
 
-                btn_row = ctk.CTkFrame(card, fg_color="transparent")
-                btn_row.pack(padx=16, pady=(4,12), fill="x")
-                ctk.CTkButton(btn_row, text="Speichern", fg_color=ACCENT, text_color="#000",
-                              height=34, width=120, command=save_perms).pack(side="left", padx=(0,8))
-                ctk.CTkButton(btn_row, text="Zugriff entziehen", fg_color=ACCENT_RED,
-                              text_color="#fff", height=34, width=140,
-                              command=revoke).pack(side="left")
+    # ── Hilfs-Widgets ─────────────────────────────────────────────────────────
+    def _page_header(self, title):
+        self.content.grid_columnconfigure(0, weight=1)
+        hdr = ctk.CTkFrame(self.content, fg_color=SIDEBAR_BG, corner_radius=0, height=56)
+        hdr.grid(row=0, column=0, sticky="ew")
+        hdr.grid_propagate(False)
+        ctk.CTkLabel(hdr, text=title,
+                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT
+                     ).pack(side="left", padx=24, pady=14)
+        return hdr
 
-        # Benutzer einladen
-        inv = ctk.CTkFrame(scroll, fg_color=BG_PANEL, corner_radius=10)
-        inv.pack(fill="x", pady=8)
-        ctk.CTkLabel(inv, text="Benutzer hinzufügen", text_color=TEXT_SEC,
-                     font=ctk.CTkFont("Segoe UI",12,"bold")).pack(padx=14, pady=(10,4), anchor="w")
-        ctk.CTkLabel(inv, text="Der Benutzer muss zuerst ein lokales Konto erstellen (Registrieren beim Login).",
-                     text_color=TEXT_SEC, font=ctk.CTkFont("Segoe UI",10),
-                     wraplength=480).pack(padx=14, anchor="w", pady=(0,10))
+    def _tabs(self, names):
+        t = ctk.CTkTabview(self.content, fg_color=SIDEBAR_BG,
+                            segmented_button_fg_color=CARD,
+                            segmented_button_selected_color=GREEN,
+                            segmented_button_selected_hover_color=GREEN_HOV,
+                            segmented_button_unselected_color=CARD,
+                            text_color=TEXT)
+        for n in names: t.add(n)
+        return t
 
-    # ── Hilfsmethode: Tabs ────────────────────────────────────────────────────
-    def _make_tabs(self, parent, names):
-        tabs = ctk.CTkTabview(parent, fg_color=BG_PANEL,
-                               segmented_button_fg_color=BG_CARD,
-                               segmented_button_selected_color=ACCENT,
-                               segmented_button_selected_hover_color="#00a846",
-                               segmented_button_unselected_color=BG_CARD)
-        tabs.pack(fill="both", expand=True, padx=20, pady=(0,16))
-        for n in names: tabs.add(n)
-        return tabs
+    def _card(self, parent, title, subtitle=""):
+        if subtitle:
+            ctk.CTkLabel(parent,text=subtitle,text_color=TEXT_MUTED,
+                         font=ctk.CTkFont("Segoe UI",11),wraplength=600).pack(anchor="w",pady=(4,4))
+        f = ctk.CTkFrame(parent,fg_color=SIDEBAR_BG,corner_radius=10)
+        f.pack(fill="x",pady=(0,8))
+        ctk.CTkLabel(f,text=title,text_color=TEXT,
+                     font=ctk.CTkFont("Segoe UI",13,"bold")).pack(padx=16,pady=(12,4),anchor="w")
+        ctk.CTkFrame(f,fg_color=BORDER,height=1).pack(fill="x")
+        return f
 
     # ── Schließen ─────────────────────────────────────────────────────────────
     def _on_close(self):
         if self.proc and self.proc.poll() is None:
             if not messagebox.askyesno("Server läuft",
-                "Der Server läuft noch. Jetzt stoppen und beenden?"):
+                "Der Server läuft noch.\nJetzt stoppen und beenden?"):
                 return
-            try:
-                self.proc.stdin.write("stop\n"); self.proc.stdin.flush()
-                self.proc.wait(timeout=10)
+            try: self.proc.stdin.write("stop\n"); self.proc.stdin.flush(); self.proc.wait(timeout=10)
             except: self.proc.kill()
         self.destroy()
 
