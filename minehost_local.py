@@ -105,6 +105,32 @@ def load_session():
     return d.get("user")
 def clear_session(): SESSION_F.unlink(missing_ok=True)
 
+def java_available():
+    try:
+        subprocess.run(["java", "-version"], capture_output=True, timeout=5)
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+def install_java_background(on_done=None, on_error=None):
+    """Installiert Eclipse Temurin 21 (LTS) via winget im Hintergrund."""
+    def run():
+        try:
+            result = subprocess.run(
+                ["winget", "install", "--id", "EclipseAdoptium.Temurin.21.JRE",
+                 "-e", "--silent", "--accept-source-agreements", "--accept-package-agreements"],
+                capture_output=True, text=True, timeout=300
+            )
+            if result.returncode == 0 or "bereits" in result.stdout.lower() or "already" in result.stdout.lower():
+                if on_done: on_done()
+            else:
+                if on_error: on_error(result.stdout + result.stderr)
+        except subprocess.TimeoutExpired:
+            if on_error: on_error("Timeout bei Java-Installation.")
+        except Exception as e:
+            if on_error: on_error(str(e))
+    threading.Thread(target=run, daemon=True).start()
+
 def load_server_cfg(name):
     return load_json(SERVERS_DIR / name / "minehost.json", {})
 
@@ -782,8 +808,14 @@ class MainApp(ctk.CTk):
                 text=True, bufsize=1
             )
         except FileNotFoundError:
-            messagebox.showerror("Java fehlt",
-                "Java nicht gefunden.\nBitte installieren: https://adoptium.net")
+            if messagebox.askyesno("Java fehlt",
+                "Java wurde nicht gefunden.\nJetzt automatisch installieren?"):
+                self._start_btn.configure(state="disabled", text="Java wird installiert…")
+                install_java_background(
+                    on_done=lambda: self.after(0, self._start),
+                    on_error=lambda e: self.after(0, lambda: messagebox.showerror(
+                        "Fehler", f"Java-Installation fehlgeschlagen:\n{e}"))
+                )
             return
         threading.Thread(target=self._read_log, daemon=True).start()
         self._srv_dot.configure(text_color=GREEN)
@@ -1473,9 +1505,63 @@ class MainApp(ctk.CTk):
         self.destroy()
 
 # ══════════════════════════════════════════════════════════════════════════════
+class SplashScreen(ctk.CTk):
+    """Zeigt beim Start eine kurze Ladeansicht und prüft/installiert Java."""
+    def __init__(self):
+        super().__init__()
+        self.title("MineHost Local")
+        self.geometry("420x280")
+        self.resizable(False, False)
+        self.configure(fg_color=BG)
+        self.overrideredirect(True)          # kein Fensterrahmen
+        # Zentrieren
+        self.update_idletasks()
+        sw = self.winfo_screenwidth(); sh = self.winfo_screenheight()
+        self.geometry(f"420x280+{(sw-420)//2}+{(sh-280)//2}")
+
+        logo = make_logo(56)
+        ctk.CTkLabel(self, image=logo, text="").pack(pady=(36,8))
+        ctk.CTkLabel(self, text="MineHost Local",
+                     font=ctk.CTkFont("Segoe UI",22,"bold"), text_color=GREEN).pack()
+        self.status_lbl = ctk.CTkLabel(self, text="Starte…",
+                                        font=ctk.CTkFont("Segoe UI",12), text_color=TEXT_MUTED)
+        self.status_lbl.pack(pady=(12,6))
+        self.prog = ctk.CTkProgressBar(self, fg_color=CARD, progress_color=GREEN, mode="indeterminate")
+        self.prog.pack(padx=60, fill="x")
+        self.prog.start()
+        self.after(200, self._check_java)
+
+    def _check_java(self):
+        if java_available():
+            self._proceed()
+        else:
+            self.status_lbl.configure(text="Java nicht gefunden — wird installiert…")
+            install_java_background(
+                on_done=lambda: self.after(0, self._java_ok),
+                on_error=lambda e: self.after(0, lambda: self._java_fail(e))
+            )
+
+    def _java_ok(self):
+        self.status_lbl.configure(text="Java installiert ✓", text_color=GREEN)
+        self.after(800, self._proceed)
+
+    def _java_fail(self, err):
+        self.status_lbl.configure(
+            text="Java-Installation fehlgeschlagen.\nBitte manuell installieren: https://adoptium.net",
+            text_color=RED)
+        self.prog.stop()
+        # Trotzdem weitermachen — vielleicht ist java doch irgendwo
+        self.after(3000, self._proceed)
+
+    def _proceed(self):
+        self.prog.stop()
+        self.destroy()
+        saved = load_session()
+        if saved and saved in load_users():
+            MainApp(username=saved).mainloop()
+        else:
+            LoginWindow().mainloop()
+
+
 if __name__ == "__main__":
-    saved = load_session()
-    if saved and saved in load_users():
-        MainApp(username=saved).mainloop()
-    else:
-        LoginWindow().mainloop()
+    SplashScreen().mainloop()
