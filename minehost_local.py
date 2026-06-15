@@ -17,6 +17,7 @@ APP_DIR     = Path(os.getenv("APPDATA")) / "MineHostLocal"
 USERS_DB    = APP_DIR / "users.json"
 SERVERS_DIR = APP_DIR / "servers"
 ACCESS_DB   = APP_DIR / "access.json"
+SESSION_F   = APP_DIR / "session.json"
 APP_DIR.mkdir(parents=True, exist_ok=True)
 SERVERS_DIR.mkdir(exist_ok=True)
 
@@ -97,6 +98,12 @@ def save_json(p, data):
 
 def load_users():  return load_json(USERS_DB, {})
 def save_users(d): save_json(USERS_DB, d)
+
+def save_session(username): save_json(SESSION_F, {"user": username})
+def load_session():
+    d = load_json(SESSION_F, {})
+    return d.get("user")
+def clear_session(): SESSION_F.unlink(missing_ok=True)
 
 def load_server_cfg(name):
     return load_json(SERVERS_DIR / name / "minehost.json", {})
@@ -220,6 +227,7 @@ class LoginWindow(ctk.CTk):
                 return
             users[user] = {"pw": hash_pw(pw), "email": self.e_email.get().strip(), "role": "admin"}
             save_users(users)
+        save_session(user)
         self.destroy()
         MainApp(username=user).mainloop()
 
@@ -307,16 +315,12 @@ class CreateServerWindow(ctk.CTkToplevel):
                                 dropdown_fg_color=CARD, dropdown_text_color=TEXT)
         om.pack(padx=18, pady=(4,16), fill="x")
 
-        # Region (Kosmetik)
+        # Region (immer Lokal)
         sec4 = self._section(scroll, "Region")
         rg = ctk.CTkFrame(sec4, fg_color="transparent")
         rg.pack(padx=18, pady=(4,14))
-        self._reg = ctk.StringVar(value="Europa")
-        for label in ["Europa","Nordamerika"]:
-            ctk.CTkRadioButton(rg, text=label, variable=self._reg, value=label,
-                                fg_color=GREEN, hover_color=GREEN_HOV,
-                                text_color=TEXT, font=ctk.CTkFont("Segoe UI",13)
-                                ).pack(side="left", padx=16)
+        ctk.CTkLabel(rg, text="🖥  Lokal  (dieser PC)", text_color=TEXT,
+                     font=ctk.CTkFont("Segoe UI",13)).pack(side="left", padx=4)
 
         # Fortschritt
         self.prog_frame = ctk.CTkFrame(scroll, fg_color=SIDEBAR_BG, corner_radius=10)
@@ -560,10 +564,16 @@ class MainApp(ctk.CTk):
                       height=36, corner_radius=6,
                       command=self._new_server).pack(padx=8, fill="x")
 
-        # Benutzer unten
-        ctk.CTkLabel(self.sidebar, text=f"@ {self.username}",
-                     text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",10)
-                     ).pack(side="bottom", pady=12)
+        # Benutzer + Logout unten
+        bot = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        bot.pack(side="bottom", padx=8, pady=10, fill="x")
+        ctk.CTkLabel(bot, text=f"@ {self.username}",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",10)).pack(anchor="w")
+        ctk.CTkButton(bot, text="Ausloggen", anchor="w",
+                      fg_color="transparent", hover_color=CARD,
+                      text_color=RED, font=ctk.CTkFont("Segoe UI",11),
+                      height=28, corner_radius=6,
+                      command=self._logout).pack(fill="x", pady=(2,0))
 
     # ── Navigation ────────────────────────────────────────────────────────────
     def _clear(self):
@@ -1447,6 +1457,11 @@ class MainApp(ctk.CTk):
         ctk.CTkFrame(f,fg_color=BORDER,height=1).pack(fill="x")
         return f
 
+    def _logout(self):
+        clear_session()
+        self.destroy()
+        LoginWindow().mainloop()
+
     # ── Schließen ─────────────────────────────────────────────────────────────
     def _on_close(self):
         if self.proc and self.proc.poll() is None:
@@ -1459,4 +1474,8 @@ class MainApp(ctk.CTk):
 
 # ══════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    LoginWindow().mainloop()
+    saved = load_session()
+    if saved and saved in load_users():
+        MainApp(username=saved).mainloop()
+    else:
+        LoginWindow().mainloop()
