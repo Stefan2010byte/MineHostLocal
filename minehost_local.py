@@ -628,6 +628,7 @@ class MainApp(ctk.CTk):
         for w in self.content.winfo_children(): w.destroy()
 
     def _show(self, key):
+        self._active_page = key
         for k,b in self._nav.items():
             b.configure(
                 text_color=GREEN if k==key else TEXT_MUTED,
@@ -716,25 +717,69 @@ class MainApp(ctk.CTk):
                       ).pack(side="left")
 
         # ── Status-Banner ──
-        status_color = GREEN if is_on else RED
-        status_text  = "● Online" if is_on else "● Ausgeschaltet"
-        banner = ctk.CTkFrame(wrap, fg_color=status_color, corner_radius=0, height=46)
+        # Zustände: "offline" | "starting" | "online" | "error"
+        state = "online" if is_on else getattr(self, "_server_state", "offline")
+
+        STATES = {
+            "offline":  (RED,          "● Ausgeschaltet",   "#fff"),
+            "starting": ("#f39c12",    "⟳ Startet…",        "#000"),
+            "online":   (GREEN,        "● Online",           "#000"),
+            "error":    ("#8e0000",    "✖ Fehler",           "#fff"),
+        }
+        s_color, s_text, s_fg = STATES.get(state, STATES["offline"])
+
+        banner = ctk.CTkFrame(wrap, fg_color=s_color, corner_radius=0, height=46)
         banner.pack(fill="x", pady=16)
         banner.pack_propagate(False)
-        ctk.CTkLabel(banner, text=status_text,
+        ctk.CTkLabel(banner, text=s_text,
                      font=ctk.CTkFont("Segoe UI",15,"bold"),
-                     text_color="#000").pack(expand=True)
+                     text_color=s_fg).pack(expand=True)
 
-        # ── Start/Stopp Button ──
-        self._start_btn = ctk.CTkButton(wrap,
-            text="Stoppen" if is_on else "Starten",
-            fg_color=RED if is_on else GREEN,
-            hover_color=RED_HOV if is_on else GREEN_HOV,
-            text_color="#000",
-            font=ctk.CTkFont("Segoe UI",18,"bold"),
-            width=180, height=56, corner_radius=28,
-            command=self._toggle)
-        self._start_btn.pack(pady=8)
+        # ── Buttons je nach Zustand ──
+        btn_row = ctk.CTkFrame(wrap, fg_color="transparent")
+        btn_row.pack(pady=8)
+
+        if state == "offline":
+            self._start_btn = ctk.CTkButton(btn_row, text="Starten",
+                fg_color=GREEN, hover_color=GREEN_HOV, text_color="#000",
+                font=ctk.CTkFont("Segoe UI",18,"bold"),
+                width=180, height=56, corner_radius=28,
+                command=self._toggle)
+            self._start_btn.pack()
+
+        elif state == "starting":
+            # Platzhalter — deaktiviert bis Server bereit
+            self._start_btn = ctk.CTkButton(btn_row, text="Startet…",
+                fg_color="#555", hover_color="#555", text_color="#aaa",
+                font=ctk.CTkFont("Segoe UI",18,"bold"),
+                width=180, height=56, corner_radius=28, state="disabled",
+                command=lambda: None)
+            self._start_btn.pack()
+            prog = ctk.CTkProgressBar(wrap, fg_color=CARD, progress_color="#f39c12",
+                                       mode="indeterminate", width=180)
+            prog.pack(pady=(4,0))
+            prog.start()
+
+        elif state == "online":
+            self._start_btn = ctk.CTkButton(btn_row, text="Stoppen",
+                fg_color=RED, hover_color=RED_HOV, text_color="#fff",
+                font=ctk.CTkFont("Segoe UI",18,"bold"),
+                width=180, height=56, corner_radius=28,
+                command=self._toggle)
+            self._start_btn.pack()
+
+        elif state == "error":
+            ctk.CTkButton(btn_row, text="⚠ Fehler anzeigen",
+                fg_color="#8e0000", hover_color="#6b0000", text_color="#fff",
+                font=ctk.CTkFont("Segoe UI",14,"bold"),
+                width=180, height=48, corner_radius=28,
+                command=self._show_error).pack(pady=(0,4))
+            ctk.CTkButton(btn_row, text="Neu starten",
+                fg_color=GREEN, hover_color=GREEN_HOV, text_color="#000",
+                font=ctk.CTkFont("Segoe UI",13),
+                width=180, height=38, corner_radius=28,
+                command=self._toggle).pack()
+
 
         # ── Info-Karten (wie Aternos) ──
         info_frame = ctk.CTkFrame(wrap, fg_color=SIDEBAR_BG, corner_radius=10)
@@ -813,9 +858,21 @@ class MainApp(ctk.CTk):
         self.after(2000, self._update_monitor)
 
     # ── Server starten/stoppen ────────────────────────────────────────────────
+    def _set_state(self, state):
+        """state: 'offline' | 'starting' | 'online' | 'error'"""
+        self._server_state = state
+        dot_colors = {"offline": RED, "starting": "#f39c12", "online": GREEN, "error": "#8e0000"}
+        self._srv_dot.configure(text_color=dot_colors.get(state, RED))
+        # Dashboard nur neu laden wenn gerade sichtbar
+        if hasattr(self, "_active_page") and self._active_page == "dashboard":
+            self._p_dashboard()
+
     def _toggle(self):
-        if self.proc and self.proc.poll() is None: self._stop()
-        else: self._start()
+        state = getattr(self, "_server_state", "offline")
+        if state in ("online", "starting"):
+            self._stop()
+        else:
+            self._start()
 
     def _start(self):
         srv_dir = Path(self.cfg.get("dir",""))
@@ -832,6 +889,7 @@ class MainApp(ctk.CTk):
                         "Fehler", f"Java-Installation fehlgeschlagen:\n{e}"))
                 )
             return
+        self._error_log = []
         try:
             self.proc = subprocess.Popen(
                 [java, "-Xmx2G", "-Xms512M", "-jar", "server.jar", "--nogui"],
@@ -840,23 +898,57 @@ class MainApp(ctk.CTk):
                 text=True, bufsize=1
             )
         except Exception as e:
-            messagebox.showerror("Startfehler", str(e))
+            self._error_log = [str(e)]
+            self._set_state("error")
             return
+        self._set_state("starting")
         threading.Thread(target=self._read_log, daemon=True).start()
-        self._srv_dot.configure(text_color=GREEN)
-        self._show("dashboard")
+        # Watchdog: prüft ob Prozess stirbt bevor er "Done" meldet
+        threading.Thread(target=self._watchdog, daemon=True).start()
+
+    def _watchdog(self):
+        """Wartet darauf dass der Prozess endet ohne 'Done' → Fehler."""
+        if self.proc:
+            self.proc.wait()
+            state = getattr(self, "_server_state", "offline")
+            if state == "starting":   # Prozess gestorben bevor Online
+                self.after(0, lambda: self._set_state("error"))
+            elif state == "online":   # Normal beendet
+                self.after(0, lambda: self._set_state("offline"))
 
     def _stop(self):
         if self.proc:
             try: self.proc.stdin.write("stop\n"); self.proc.stdin.flush(); self.proc.wait(timeout=15)
             except: self.proc.kill()
             self.proc = None
-        self._srv_dot.configure(text_color=RED)
-        self._show("dashboard")
+        self._set_state("offline")
+
+    def _show_error(self):
+        log = "\n".join(getattr(self, "_error_log", [])[-40:]) or "Keine Details verfügbar."
+        win = ctk.CTkToplevel(self)
+        win.title("Fehler-Details")
+        win.geometry("640x420")
+        win.configure(fg_color=BG)
+        win.grab_set()
+        ctk.CTkLabel(win, text="✖  Server-Fehler", font=ctk.CTkFont("Segoe UI",16,"bold"),
+                     text_color=RED).pack(padx=20, pady=(16,8), anchor="w")
+        box = ctk.CTkTextbox(win, fg_color=CARD, text_color="#ff8a80",
+                              font=ctk.CTkFont("Consolas",11))
+        box.pack(fill="both", expand=True, padx=20, pady=(0,8))
+        box.insert("end", log)
+        box.configure(state="disabled")
+        ctk.CTkButton(win, text="Schließen", fg_color=CARD, text_color=TEXT,
+                      command=win.destroy).pack(pady=(0,16))
 
     def _read_log(self):
+        if not hasattr(self, "_error_log"): self._error_log = []
         for line in self.proc.stdout:
+            self._error_log.append(line)
+            if len(self._error_log) > 500: self._error_log = self._error_log[-500:]
             self._append_log(line)
+            # Erkennung: Server ist bereit
+            if "Done" in line and "For help" in line:
+                self.after(0, lambda: self._set_state("online"))
 
     def _append_log(self, text):
         if hasattr(self,"_log_box"):
