@@ -105,12 +105,34 @@ def load_session():
     return d.get("user")
 def clear_session(): SESSION_F.unlink(missing_ok=True)
 
-def java_available():
+JAVA_SEARCH_DIRS = [
+    Path(os.getenv("ProgramFiles", "C:/Program Files")) / "Java",
+    Path(os.getenv("ProgramFiles", "C:/Program Files")) / "Eclipse Adoptium",
+    Path(os.getenv("ProgramFiles", "C:/Program Files")) / "Microsoft" / "jdk",
+    Path(os.getenv("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Java",
+    Path("C:/Program Files/Java"),
+    Path("C:/Program Files/Eclipse Adoptium"),
+    Path("C:/Program Files/Microsoft/jdk"),
+]
+
+def find_java_exe():
+    """Findet java.exe — erst im PATH, dann in bekannten Installationsordnern."""
+    # 1. PATH prüfen
     try:
         subprocess.run(["java", "-version"], capture_output=True, timeout=5)
-        return True
+        return "java"
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+        pass
+    # 2. Typische Installationsordner durchsuchen
+    for base in JAVA_SEARCH_DIRS:
+        if base.exists():
+            for java_exe in base.rglob("java.exe"):
+                if "bin" in java_exe.parts:
+                    return str(java_exe)
+    return None
+
+def java_available():
+    return find_java_exe() is not None
 
 def install_java_background(on_done=None, on_error=None):
     """Installiert Eclipse Temurin 21 (LTS) via winget im Hintergrund."""
@@ -800,22 +822,25 @@ class MainApp(ctk.CTk):
         if not (srv_dir/"server.jar").exists():
             messagebox.showerror("Fehler","server.jar nicht gefunden.")
             return
-        try:
-            self.proc = subprocess.Popen(
-                ["java","-Xmx2G","-Xms512M","-jar","server.jar","--nogui"],
-                cwd=str(srv_dir), stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1
-            )
-        except FileNotFoundError:
+        java = find_java_exe()
+        if not java:
             if messagebox.askyesno("Java fehlt",
                 "Java wurde nicht gefunden.\nJetzt automatisch installieren?"):
-                self._start_btn.configure(state="disabled", text="Java wird installiert…")
                 install_java_background(
                     on_done=lambda: self.after(0, self._start),
                     on_error=lambda e: self.after(0, lambda: messagebox.showerror(
                         "Fehler", f"Java-Installation fehlgeschlagen:\n{e}"))
                 )
+            return
+        try:
+            self.proc = subprocess.Popen(
+                [java, "-Xmx2G", "-Xms512M", "-jar", "server.jar", "--nogui"],
+                cwd=str(srv_dir), stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1
+            )
+        except Exception as e:
+            messagebox.showerror("Startfehler", str(e))
             return
         threading.Thread(target=self._read_log, daemon=True).start()
         self._srv_dot.configure(text_color=GREEN)
