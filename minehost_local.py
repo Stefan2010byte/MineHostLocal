@@ -42,19 +42,69 @@ SIDEBAR_W   = 200
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
-MC_VERSIONS = ["1.21.4","1.21.1","1.20.4","1.20.1","1.19.4","1.18.2","1.17.1","1.16.5","1.12.2","1.8.9"]
+# Windows: CMD-Fenster verstecken
+CREATE_NO_WINDOW = 0x08000000
 
+# Bekannte Vanilla-Server-JARs (Fallback wenn API nicht erreichbar)
 VANILLA_JARS = {
     "1.21.4": "https://piston-data.mojang.com/v1/objects/4707d00eb834b446575d89a61a11b5d548d8c001/server.jar",
+    "1.21.3": "https://piston-data.mojang.com/v1/objects/45810d238246d90e811d896f87b14695b7fb6839/server.jar",
     "1.21.1": "https://piston-data.mojang.com/v1/objects/59353fb40c36d304f2035d51e7d6e6baa98dc05c/server.jar",
+    "1.21":   "https://piston-data.mojang.com/v1/objects/450698d1863ab5180c25d7c804ef0fe6369dd1ba/server.jar",
+    "1.20.6": "https://piston-data.mojang.com/v1/objects/145ac199e80a12f5e79869b68af6dddc2c84e81e/server.jar",
     "1.20.4": "https://piston-data.mojang.com/v1/objects/8dd1a28015f51b1803213892b50b7b4fc76e594d/server.jar",
+    "1.20.2": "https://piston-data.mojang.com/v1/objects/5b868151bd02b41319f54c8d4061b8cae84e665c/server.jar",
     "1.20.1": "https://piston-data.mojang.com/v1/objects/84194a2f286ef7c14ed7ce0090dba59902951553/server.jar",
+    "1.20":   "https://piston-data.mojang.com/v1/objects/15c777e2cfe0556eef19aab534b186c0c6f277e1/server.jar",
     "1.19.4": "https://piston-data.mojang.com/v1/objects/8f3112a1049751cc472ec13e397eade5336ca7ae/server.jar",
+    "1.19.3": "https://piston-data.mojang.com/v1/objects/c9df48efed58511cdd0213c56b9013a7b5c9ac1f/server.jar",
+    "1.19.2": "https://piston-data.mojang.com/v1/objects/f69c284232d7c7580bd89a5a4931c3581eae1378/server.jar",
+    "1.19.1": "https://piston-data.mojang.com/v1/objects/8399e1211e95faa421c1507b322dbeae86d604df/server.jar",
+    "1.19":   "https://piston-data.mojang.com/v1/objects/e00c4052dac1d59a1188b2aa9d5a87113aaf1122/server.jar",
     "1.18.2": "https://piston-data.mojang.com/v1/objects/c8f83c5655308435b3dcf03c06d9fe8740a77469/server.jar",
+    "1.18.1": "https://piston-data.mojang.com/v1/objects/125e5adf40c659fd3bce3e66e67a16bb49ecc1b9/server.jar",
+    "1.18":   "https://piston-data.mojang.com/v1/objects/3cf24a8694aca6267883b17d934efacc5e44440d/server.jar",
+    "1.17.1": "https://piston-data.mojang.com/v1/objects/a16d67e5807ef57a8e89f9e92f87e3f5e9d01388/server.jar",
+    "1.17":   "https://piston-data.mojang.com/v1/objects/0a269b5f2c5b93b1712d0f5dc43b6182b9ab254e/server.jar",
     "1.16.5": "https://piston-data.mojang.com/v1/objects/1b557e7b033b583cd9f66746b7a9ab1ec1673eca/server.jar",
+    "1.16.4": "https://piston-data.mojang.com/v1/objects/35139deedbd5182953cf1caa23835da59ca3d7cd/server.jar",
+    "1.16.3": "https://piston-data.mojang.com/v1/objects/f02f4473dbf152c23d7d484952121db0b36698cb/server.jar",
+    "1.16.2": "https://piston-data.mojang.com/v1/objects/c5f6fb23c3876461d46ec380421e42b289789530/server.jar",
+    "1.16.1": "https://piston-data.mojang.com/v1/objects/a412fd69db1f81db3f511c1463fd304675244077/server.jar",
+    "1.15.2": "https://piston-data.mojang.com/v1/objects/bb2b6b1aefcd70dfd1892149ac3a215f6c636b07/server.jar",
+    "1.14.4": "https://piston-data.mojang.com/v1/objects/3dc3d84a581f14691199cf6831b71ed1296a9fdf/server.jar",
+    "1.13.2": "https://piston-data.mojang.com/v1/objects/3737db93722a9e39eeada7c27e7aca28b144ffa7/server.jar",
     "1.12.2": "https://piston-data.mojang.com/v1/objects/886945bfb2b978778c3a0288fd7fab09d315b25f/server.jar",
+    "1.12.1": "https://piston-data.mojang.com/v1/objects/a1a7f6dd66b5b9cc2c3b7bba30c98e2b7555b4a1/server.jar",
+    "1.12":   "https://piston-data.mojang.com/v1/objects/8494e4c9d28af7eed1effef6e51569e498bb4d07/server.jar",
+    "1.11.2": "https://piston-data.mojang.com/v1/objects/f00c294a1576e03fddcac777c3cf4c7d404c4ba4/server.jar",
+    "1.10.2": "https://piston-data.mojang.com/v1/objects/3dc3d84a581f14691199cf6831b71ed1296a9fdf/server.jar",
+    "1.9.4":  "https://piston-data.mojang.com/v1/objects/edbb7b16de67b99006773a4dc0e0f28e01fe6a6c/server.jar",
     "1.8.9":  "https://piston-data.mojang.com/v1/objects/b58b2ceb36e01251b9a9e3d916fdca8b8e9620b2/server.jar",
+    "1.7.10": "https://piston-data.mojang.com/v1/objects/952438ac4e01b4d115c5fc38f891710c4941df29/server.jar",
 }
+
+# Wird beim Start live von Mojang geladen; Fallback = VANILLA_JARS keys
+MC_VERSIONS     = list(VANILLA_JARS.keys())
+_MC_VER_LOADED  = False
+
+def fetch_mc_versions_bg(callback):
+    """Lädt alle Release-Versionen von Mojang API im Hintergrund."""
+    def _run():
+        global MC_VERSIONS, _MC_VER_LOADED
+        try:
+            r = requests.get(
+                "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+                timeout=8)
+            data = r.json()
+            releases = [v["id"] for v in data["versions"] if v["type"] == "release"]
+            if releases:
+                MC_VERSIONS = releases   # komplette Liste
+                _MC_VER_LOADED = True
+                if callback: callback(releases)
+        except Exception:
+            pass   # Fallback bleibt aktiv
+    threading.Thread(target=_run, daemon=True).start()
 
 SERVER_TYPES = {
     "Vanilla":       {"tag":"vanilla",  "icon":"✔",  "color":GREEN,    "desc":"Offizieller Mojang Server"},
@@ -122,7 +172,8 @@ def find_java_exe():
     """Findet java.exe — erst im PATH, dann in bekannten Installationsordnern."""
     # 1. PATH prüfen
     try:
-        subprocess.run(["java", "-version"], capture_output=True, timeout=5)
+        subprocess.run(["java", "-version"], capture_output=True, timeout=5,
+                       creationflags=CREATE_NO_WINDOW)
         return "java"
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
@@ -226,7 +277,9 @@ class PlayitManager:
                     cwd=str(self.srv_dir),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    text=True, bufsize=1
+                    stdin=subprocess.DEVNULL,
+                    text=True, bufsize=1,
+                    creationflags=CREATE_NO_WINDOW
                 )
             except Exception as e:
                 if self.on_log: self.on_log(f"[playit.gg] Startfehler: {e}\n")
@@ -299,7 +352,8 @@ def install_java_background(on_done=None, on_error=None):
             result = subprocess.run(
                 ["winget", "install", "--id", "EclipseAdoptium.Temurin.21.JRE",
                  "-e", "--silent", "--accept-source-agreements", "--accept-package-agreements"],
-                capture_output=True, text=True, timeout=300
+                capture_output=True, text=True, timeout=300,
+                creationflags=CREATE_NO_WINDOW
             )
             if result.returncode == 0 or "bereits" in result.stdout.lower() or "already" in result.stdout.lower():
                 if on_done: on_done()
@@ -507,14 +561,75 @@ class CreateServerWindow(ctk.CTkToplevel):
             sub.grid(row=r*2+1 if False else r+20, column=c)   # skip subtitles for clean grid
         self._pick("Vanilla")
 
-        # Version
+        # Version (live von Mojang geladen)
         sec3 = self._section(scroll, "Version")
         self.ver_var = ctk.StringVar(value=MC_VERSIONS[0])
-        om = ctk.CTkOptionMenu(sec3, variable=self.ver_var, values=MC_VERSIONS,
+        self._ver_om = ctk.CTkOptionMenu(sec3, variable=self.ver_var, values=MC_VERSIONS,
                                 fg_color=CARD, button_color=BLUE,
                                 font=ctk.CTkFont("Segoe UI",13), text_color=TEXT,
                                 dropdown_fg_color=CARD, dropdown_text_color=TEXT)
-        om.pack(padx=18, pady=(4,16), fill="x")
+        self._ver_om.pack(padx=18, pady=(4,6), fill="x")
+        self._ver_status = ctk.CTkLabel(sec3, text="⟳ Lade Versionen von Mojang…",
+                                         text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",9))
+        self._ver_status.pack(padx=18, pady=(0,10), anchor="w")
+        def _on_versions_loaded(versions):
+            try:
+                self._ver_om.configure(values=versions)
+                self.ver_var.set(versions[0])
+                self._ver_status.configure(text=f"✓  {len(versions)} Versionen geladen")
+            except: pass
+        fetch_mc_versions_bg(callback=_on_versions_loaded)
+
+        # Installationsordner
+        sec_loc = self._section(scroll, "Speicherort")
+        loc_row = ctk.CTkFrame(sec_loc, fg_color="transparent")
+        loc_row.pack(padx=18, pady=(6,12), fill="x")
+        loc_row.grid_columnconfigure(0, weight=1)
+        default_loc = str(SERVERS_DIR)
+        self._install_path = ctk.StringVar(value=default_loc)
+        loc_entry = ctk.CTkEntry(loc_row, textvariable=self._install_path,
+                                  fg_color=CARD, border_color=BORDER,
+                                  text_color=TEXT, font=ctk.CTkFont("Segoe UI",12))
+        loc_entry.grid(row=0, column=0, sticky="ew", padx=(0,8))
+        def _browse_loc():
+            d = filedialog.askdirectory(title="Server-Ordner wählen",
+                                         initialdir=self._install_path.get())
+            if d: self._install_path.set(d)
+        ctk.CTkButton(loc_row, text="📁 Wählen", width=90, height=34,
+                      fg_color=CARD, hover_color=BORDER, text_color=TEXT,
+                      font=ctk.CTkFont("Segoe UI",11), corner_radius=6,
+                      command=_browse_loc).grid(row=0, column=1)
+
+        # Welt aus Minecraft-Launcher importieren
+        sec_world = self._section(scroll, "Welt importieren  (optional)")
+        _mc_saves = Path(os.getenv("APPDATA","")) / ".minecraft" / "saves"
+        _launcher_worlds = []
+        if _mc_saves.exists():
+            try: _launcher_worlds = [d.name for d in _mc_saves.iterdir() if d.is_dir()]
+            except: pass
+        if _launcher_worlds:
+            ctk.CTkLabel(sec_world,
+                         text="Welt aus deinem Minecraft-Launcher übernehmen:",
+                         text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",10)
+                         ).pack(padx=18, pady=(8,4), anchor="w")
+            self._import_world = ctk.StringVar(value="— Keine (neue Welt) —")
+            world_opts = ["— Keine (neue Welt) —"] + _launcher_worlds
+            ctk.CTkOptionMenu(sec_world, variable=self._import_world, values=world_opts,
+                               fg_color=CARD, button_color=BLUE,
+                               font=ctk.CTkFont("Segoe UI",12), text_color=TEXT,
+                               dropdown_fg_color=CARD, dropdown_text_color=TEXT
+                               ).pack(padx=18, pady=(0,12), fill="x")
+            ctk.CTkLabel(sec_world,
+                         text=f"📁  Launcher-Welten gefunden in: {_mc_saves}",
+                         text_color="#2ecc71", font=ctk.CTkFont("Segoe UI",9)
+                         ).pack(padx=18, pady=(0,10), anchor="w")
+        else:
+            self._import_world = ctk.StringVar(value="— Keine —")
+            ctk.CTkLabel(sec_world,
+                         text="Kein Minecraft-Launcher gefunden  (%APPDATA%\\.minecraft\\saves\\)",
+                         text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",10)
+                         ).pack(padx=18, pady=12, anchor="w")
+        self._mc_saves_path = _mc_saves
 
         # Region (immer Lokal)
         sec4 = self._section(scroll, "Region")
@@ -590,8 +705,14 @@ class CreateServerWindow(ctk.CTkToplevel):
         safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in raw_name)
         if not safe: safe = "Server"
 
-        srv_dir = SERVERS_DIR / safe
+        # Benutzergewählter Installationsordner
+        install_base = Path(getattr(self, "_install_path", type("", (), {"get": lambda s: str(SERVERS_DIR)})()).get())
+        srv_dir = install_base / safe
         srv_dir.mkdir(parents=True, exist_ok=True)
+
+        # Welt-Import merken
+        world_to_import = getattr(self, "_import_world", None)
+        world_name = world_to_import.get() if world_to_import else "— Keine —"
 
         def run():
             self.prog_lbl.configure(text="Ermittle Download-URL…", text_color=TEXT_MUTED)
@@ -623,6 +744,18 @@ class CreateServerWindow(ctk.CTkToplevel):
             # eula.txt
             (srv_dir/"eula.txt").write_text("eula=true\n", encoding="utf-8")
 
+            # Welt aus Launcher importieren
+            if world_name and world_name not in ("— Keine (neue Welt) —","— Keine —"):
+                world_src = self._mc_saves_path / world_name
+                world_dst = srv_dir / "world"
+                if world_src.exists() and not world_dst.exists():
+                    self.prog_lbl.configure(text=f"Importiere Welt '{world_name}'…")
+                    try:
+                        shutil.copytree(str(world_src), str(world_dst))
+                        self.prog_lbl.configure(text=f"✓ Welt '{world_name}' importiert.")
+                    except Exception as e:
+                        self.prog_lbl.configure(text=f"Welt-Import Fehler: {e}", text_color="#ffd600")
+
             # server.properties
             (srv_dir/"server.properties").write_text(
                 f"server-port={port}\nmax-players={players}\nmotd={motd}\n"
@@ -645,6 +778,7 @@ class CreateServerWindow(ctk.CTkToplevel):
                 "max_players": players,
                 "motd":        motd,
                 "dir":         str(srv_dir),
+                "imported_world": world_name if world_name not in ("— Keine (neue Welt) —","— Keine —") else "",
             }
             save_server_cfg(safe, cfg)
 
@@ -676,6 +810,8 @@ class MainApp(ctk.CTk):
         self.configure(fg_color=BG)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build()
+        # Minecraft-Versionen live von Mojang laden
+        fetch_mc_versions_bg(callback=None)
         servers = list_servers()
         if servers:
             self._load_server(servers[0])
@@ -1152,7 +1288,8 @@ class MainApp(ctk.CTk):
                  "-jar", "server.jar", "--nogui"],
                 cwd=str(srv_dir), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1
+                text=True, bufsize=1,
+                creationflags=CREATE_NO_WINDOW
             )
         except Exception as e:
             self._error_log = [str(e)]
@@ -1489,7 +1626,8 @@ class MainApp(ctk.CTk):
         try:
             import subprocess as _sp
             _r = _sp.run(["wmic","path","win32_VideoController","get","name","/format:list"],
-                         capture_output=True, text=True, timeout=4)
+                         capture_output=True, text=True, timeout=4,
+                         creationflags=CREATE_NO_WINDOW)
             for _l in _r.stdout.splitlines():
                 if _l.startswith("Name=") and _l.strip()!="Name=":
                     gpu_name = _l.split("=",1)[1].strip(); break
