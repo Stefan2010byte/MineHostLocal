@@ -22,7 +22,7 @@ PLAYIT_EXE  = APP_DIR / "playit.exe"
 APP_DIR.mkdir(parents=True, exist_ok=True)
 SERVERS_DIR.mkdir(exist_ok=True)
 
-PLAYIT_URL  = "https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-windows_amd64.exe"
+PLAYIT_URL  = None   # wird dynamisch via GitHub API ermittelt
 
 # ── Aternos-Farben ────────────────────────────────────────────────────────────
 BG          = "#111317"
@@ -137,15 +137,41 @@ def find_java_exe():
 def java_available():
     return find_java_exe() is not None
 
+def get_playit_download_url():
+    """Holt die echte 64-bit Windows EXE-URL vom GitHub Release API."""
+    try:
+        r = requests.get(
+            "https://api.github.com/repos/playit-cloud/playit-agent/releases/latest",
+            timeout=10, headers={"Accept": "application/vnd.github+json"}
+        )
+        assets = r.json().get("assets", [])
+        for a in assets:
+            name = a["name"].lower()
+            # Suche nach 64-bit Windows EXE
+            if "windows" in name and ("x86_64" in name or "amd64" in name) and name.endswith(".exe"):
+                return a["browser_download_url"]
+        # Fallback: erstes .exe Asset
+        for a in assets:
+            if a["name"].lower().endswith(".exe"):
+                return a["browser_download_url"]
+    except Exception:
+        pass
+    return None
+
 def download_playit(on_done=None, on_progress=None):
-    """Lädt playit.exe herunter falls noch nicht vorhanden."""
+    """Lädt playit.exe (64-bit) herunter falls noch nicht vorhanden."""
     def run():
         if PLAYIT_EXE.exists():
             if on_done: on_done()
             return
         try:
-            if on_progress: on_progress("Lade playit.gg Agent herunter…")
-            r = requests.get(PLAYIT_URL, stream=True, timeout=60)
+            if on_progress: on_progress("Ermittle playit.gg Download-URL…")
+            url = get_playit_download_url()
+            if not url:
+                if on_progress: on_progress("playit.gg URL nicht gefunden.")
+                return
+            if on_progress: on_progress(f"Lade playit.gg herunter…")
+            r = requests.get(url, stream=True, timeout=120, allow_redirects=True)
             total = int(r.headers.get("content-length", 0))
             done  = 0
             with open(PLAYIT_EXE, "wb") as fh:
@@ -707,6 +733,7 @@ class MainApp(ctk.CTk):
     # PAGE: DASHBOARD  (Aternos-Stil)
     # ═════════════════════════════════════════════════════════════════════════
     def _p_dashboard(self):
+        self._clear()   # verhindert doppeltes Rendering
         self.content.grid_rowconfigure(0, weight=1)
         self.content.grid_columnconfigure(0, weight=1)
 
