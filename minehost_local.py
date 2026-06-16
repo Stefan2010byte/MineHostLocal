@@ -147,10 +147,8 @@ def get_playit_download_url():
         assets = r.json().get("assets", [])
         for a in assets:
             name = a["name"].lower()
-            # Suche nach 64-bit Windows EXE
             if "windows" in name and ("x86_64" in name or "amd64" in name) and name.endswith(".exe"):
                 return a["browser_download_url"]
-        # Fallback: erstes .exe Asset
         for a in assets:
             if a["name"].lower().endswith(".exe"):
                 return a["browser_download_url"]
@@ -170,7 +168,7 @@ def download_playit(on_done=None, on_progress=None):
             if not url:
                 if on_progress: on_progress("playit.gg URL nicht gefunden.")
                 return
-            if on_progress: on_progress(f"Lade playit.gg herunter…")
+            if on_progress: on_progress("Lade playit.gg herunter…")
             r = requests.get(url, stream=True, timeout=120, allow_redirects=True)
             total = int(r.headers.get("content-length", 0))
             done  = 0
@@ -184,6 +182,101 @@ def download_playit(on_done=None, on_progress=None):
         except Exception as e:
             if on_progress: on_progress(f"Download fehlgeschlagen: {e}")
     threading.Thread(target=run, daemon=True).start()
+
+# ── playit.gg Tunnel-Manager ──────────────────────────────────────────────────
+class PlayitManager:
+    """
+    Verwaltet den playit.gg Tunnel-Prozess.
+    - Lädt playit.exe herunter falls nötig
+    - Behält playit.toml (Config) IMMER — niemals löschen
+    - Parsed Claim-Link und Tunnel-Adresse aus dem Output
+    - Callbacks: on_claim(url), on_address(addr), on_log(line)
+    """
+    def __init__(self, srv_dir: Path):
+        self.srv_dir   = srv_dir
+        self.proc      = None
+        self.toml_path = srv_dir / "playit.toml"   # NIEMALS löschen
+        self._thread   = None
+
+        # Callbacks
+        self.on_claim   = None   # on_claim(url: str)
+        self.on_address = None   # on_address(addr: str)
+        self.on_log     = None   # on_log(line: str)
+
+    def start(self):
+        """Startet playit.exe (download falls nötig) im Hintergrund."""
+        def _launch():
+            if not PLAYIT_EXE.exists():
+                if self.on_log: self.on_log("[playit.gg] Lade Agent herunter…\n")
+                done_ev = threading.Event()
+                download_playit(
+                    on_done=done_ev.set,
+                    on_progress=lambda m: self.on_log(f"[playit.gg] {m}\n") if self.on_log else None
+                )
+                done_ev.wait(timeout=180)
+                if not PLAYIT_EXE.exists():
+                    if self.on_log: self.on_log("[playit.gg] Download fehlgeschlagen.\n")
+                    return
+
+            if self.on_log: self.on_log("[playit.gg] Starte Tunnel…\n")
+            try:
+                # Starte im Server-Ordner damit playit.toml dort gespeichert wird
+                self.proc = subprocess.Popen(
+                    [str(PLAYIT_EXE)],
+                    cwd=str(self.srv_dir),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True, bufsize=1
+                )
+            except Exception as e:
+                if self.on_log: self.on_log(f"[playit.gg] Startfehler: {e}\n")
+                return
+
+            self._read_output()
+
+        self._thread = threading.Thread(target=_launch, daemon=True)
+        self._thread.start()
+
+    def _read_output(self):
+        import re, webbrowser
+        addr_patterns = [
+            r"([\w\-]+\.at\.playit\.gg:\d+)",
+            r"([\w\-]+\.playit\.gg:\d+)",
+            r"alloc[^\n]*([\d\.]+:\d+)",
+            r"address[:\s]+([\w\.\-]+:\d+)",
+        ]
+        for line in self.proc.stdout:
+            if self.on_log: self.on_log(f"[playit.gg] {line}")
+
+            # Claim-Link
+            if "playit.gg/claim" in line or "playit.gg/account" in line:
+                m = re.search(r"(https://[^\s]+)", line)
+                if m and self.on_claim:
+                    self.on_claim(m.group(1))
+
+            # Tunnel-Adresse
+            for pat in addr_patterns:
+                m = re.search(pat, line, re.IGNORECASE)
+                if m:
+                    addr = m.group(1)
+                    if "playit" in addr or ":" in addr:
+                        if self.on_address:
+                            self.on_address(addr)
+                        break
+
+    def stop(self):
+        if self.proc:
+            try:
+                self.proc.terminate()
+                self.proc.wait(timeout=5)
+            except:
+                try: self.proc.kill()
+                except: pass
+            self.proc = None
+        # playit.toml NIEMALS löschen — Adresse bleibt für immer
+
+    def is_running(self):
+        return self.proc is not None and self.proc.poll() is None
 
 def install_java_background(on_done=None, on_error=None):
     """Installiert Eclipse Temurin 21 (LTS) via winget im Hintergrund."""
@@ -563,12 +656,13 @@ class CreateServerWindow(ctk.CTkToplevel):
 class MainApp(ctk.CTk):
     def __init__(self, username):
         super().__init__()
-        self.username     = username
-        self.server_name  = None
-        self.cfg          = {}
-        self.proc         = None
-        self.playit_proc  = None
-        self._playit_addr = None   # öffentliche Adresse von playit.gg
+        self.username      = username
+        self.server_name   = None
+        self.cfg           = {}
+        self.proc          = None
+        self._playit_mgr   = None
+        self._playit_addr  = None   # aktuelle Tunnel-Adresse
+        self._playit_claim = None   # Registrierungs-Link (einmalig)
         self._server_state = "offline"
         self.title("MineHost Local")
         self.geometry("1200x750")
@@ -877,6 +971,19 @@ class MainApp(ctk.CTk):
         info_row("Lokale Adresse", local_val, copy=(state!="offline"))
         info_row("Öffentliche Adresse (playit.gg)", public_val,
                  copy=bool(self._playit_addr))
+
+        # Claim-Button falls playit noch nicht registriert
+        if self._playit_claim:
+            _claim_url = self._playit_claim
+            claim_btn = ctk.CTkButton(
+                wrap,
+                text="🔗  Tunnel registrieren  (Hier klicken)",
+                fg_color="#f39c12", hover_color="#d68910", text_color="#000",
+                font=ctk.CTkFont("Segoe UI", 13, "bold"),
+                height=42, corner_radius=8,
+                command=lambda u=_claim_url: __import__("webbrowser").open(u))
+            claim_btn.pack(padx=40, pady=(0, 4), fill="x")
+
         info_row("Software", cfg.get("type_label", cfg.get("type","Vanilla")).capitalize(),
                  btn_text="Ändern", btn_cmd=lambda: self._show("software"))
         info_row("Version", cfg.get("mc_version","?"),
@@ -977,8 +1084,7 @@ class MainApp(ctk.CTk):
         self._set_state("starting")
         threading.Thread(target=self._read_log, daemon=True).start()
         threading.Thread(target=self._watchdog, daemon=True).start()
-        # playit.gg starten
-        self._start_playit(port=self.cfg.get("port","25565"))
+        self._start_playit()
 
     def _watchdog(self):
         """Wartet darauf dass der Prozess endet ohne 'Done' → Fehler."""
@@ -990,53 +1096,39 @@ class MainApp(ctk.CTk):
             elif state == "online":   # Normal beendet
                 self.after(0, lambda: self._set_state("offline"))
 
-    def _start_playit(self, port="25565"):
-        """Startet playit.gg Agent und liest die öffentliche Adresse aus dem Output."""
-        def do():
-            if not PLAYIT_EXE.exists():
-                self._append_log("[playit.gg] Wird heruntergeladen…\n")
-                done_event = threading.Event()
-                download_playit(
-                    on_done=done_event.set,
-                    on_progress=lambda m: self._append_log(f"[playit.gg] {m}\n")
-                )
-                done_event.wait(timeout=120)
-                if not PLAYIT_EXE.exists():
-                    self._append_log("[playit.gg] Download fehlgeschlagen.\n")
-                    return
+    def _start_playit(self):
+        srv_dir = Path(self.cfg.get("dir", ""))
+        mgr = PlayitManager(srv_dir)
 
-            try:
-                self.playit_proc = subprocess.Popen(
-                    [str(PLAYIT_EXE)],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1
-                )
-            except Exception as e:
-                self._append_log(f"[playit.gg] Startfehler: {e}\n")
-                return
+        def on_claim(url):
+            self._playit_claim = url
+            self._append_log(f"[playit.gg] ► Registrierung nötig: {url}\n")
+            self.after(0, self._refresh_dashboard)
 
-            self._append_log("[playit.gg] Agent gestartet — warte auf Tunnel-Adresse…\n")
-            for line in self.playit_proc.stdout:
-                self._append_log(f"[playit.gg] {line}")
-                # Adresse parsen: "tunnel address: xxx.at.playit.gg:25565"
-                low = line.lower()
-                if "tunnel address" in low or "alloc address" in low or ".playit.gg" in low:
-                    import re
-                    m = re.search(r"([\w\-]+\.playit\.gg:\d+)", line)
-                    if m:
-                        self._playit_addr = m.group(1)
-                        self._append_log(f"[playit.gg] ✓ Öffentliche Adresse: {self._playit_addr}\n")
-                        self.after(0, lambda: self._refresh_dashboard_addr())
-                # Claim-Link anzeigen
-                if "playit.gg/claim/" in line or "playit.gg/account" in line:
-                    import re
-                    m = re.search(r"https://\S+", line)
-                    if m:
-                        self._append_log(f"[playit.gg] → Konto verknüpfen: {m.group(0)}\n")
+        def on_address(addr):
+            self._playit_addr  = addr
+            self._playit_claim = None   # Claim erledigt
+            # Adresse permanent in Config speichern
+            self.cfg["playit_address"] = addr
+            save_server_cfg(self.server_name, self.cfg)
+            self._append_log(f"[playit.gg] ✓ Tunnel aktiv: {addr}\n")
+            self.after(0, self._refresh_dashboard)
 
-        threading.Thread(target=do, daemon=True).start()
+        def on_log(line):
+            self._append_log(line)
 
-    def _refresh_dashboard_addr(self):
+        # Gespeicherte Adresse aus letzter Session laden
+        saved_addr = self.cfg.get("playit_address")
+        if saved_addr:
+            self._playit_addr = saved_addr
+
+        mgr.on_claim   = on_claim
+        mgr.on_address = on_address
+        mgr.on_log     = on_log
+        self._playit_mgr = mgr
+        mgr.start()
+
+    def _refresh_dashboard(self):
         if getattr(self, "_active_page", "") == "dashboard":
             self._p_dashboard()
 
@@ -1045,12 +1137,14 @@ class MainApp(ctk.CTk):
             try: self.proc.stdin.write("stop\n"); self.proc.stdin.flush(); self.proc.wait(timeout=15)
             except: self.proc.kill()
             self.proc = None
-        if self.playit_proc:
-            try: self.playit_proc.kill()
-            except: pass
-            self.playit_proc = None
-        self._playit_addr = None
-        self._log_buffer  = []
+        # playit stoppen — toml BLEIBT erhalten
+        if self._playit_mgr:
+            self._playit_mgr.stop()
+            self._playit_mgr = None
+        # Adresse bleibt gespeichert, nur im RAM zurücksetzen
+        self._playit_addr  = self.cfg.get("playit_address")
+        self._playit_claim = None
+        self._log_buffer   = []
         self._set_state("offline")
 
     def _show_error(self):
