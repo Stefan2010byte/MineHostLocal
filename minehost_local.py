@@ -803,17 +803,20 @@ class MainApp(ctk.CTk):
             self._start_btn.pack()
 
         elif state == "starting":
-            # Platzhalter — deaktiviert bis Server bereit
-            self._start_btn = ctk.CTkButton(btn_row, text="Startet…",
-                fg_color="#555", hover_color="#555", text_color="#aaa",
-                font=ctk.CTkFont("Segoe UI",18,"bold"),
-                width=180, height=56, corner_radius=28, state="disabled",
-                command=lambda: None)
-            self._start_btn.pack()
-            prog = ctk.CTkProgressBar(wrap, fg_color=CARD, progress_color="#f39c12",
-                                       mode="indeterminate", width=180)
-            prog.pack(pady=(4,0))
-            prog.start()
+            # Ladekreis + "Laden"-Text
+            loader_frame = ctk.CTkFrame(btn_row, fg_color="transparent")
+            loader_frame.pack()
+            spinner = ctk.CTkProgressBar(loader_frame, mode="indeterminate",
+                                          width=180, height=6,
+                                          fg_color=CARD, progress_color="#f39c12")
+            spinner.pack(pady=(0,8))
+            spinner.start()
+            ctk.CTkLabel(loader_frame, text="Laden",
+                         font=ctk.CTkFont("Segoe UI",22,"bold"),
+                         text_color="#f39c12").pack()
+            ctk.CTkLabel(loader_frame, text="Server wird gestartet…",
+                         font=ctk.CTkFont("Segoe UI",12),
+                         text_color=TEXT_MUTED).pack(pady=(2,0))
 
         elif state == "online":
             self._start_btn = ctk.CTkButton(btn_row, text="Stoppen",
@@ -1035,6 +1038,7 @@ class MainApp(ctk.CTk):
             except: pass
             self.playit_proc = None
         self._playit_addr = None
+        self._log_buffer  = []
         self._set_state("offline")
 
     def _show_error(self):
@@ -1055,12 +1059,14 @@ class MainApp(ctk.CTk):
                       command=win.destroy).pack(pady=(0,16))
 
     def _read_log(self):
-        if not hasattr(self, "_error_log"): self._error_log = []
+        if not hasattr(self, "_error_log"):  self._error_log  = []
+        if not hasattr(self, "_log_buffer"): self._log_buffer = []
         for line in self.proc.stdout:
             self._error_log.append(line)
-            if len(self._error_log) > 500: self._error_log = self._error_log[-500:]
+            self._log_buffer.append(line)
+            if len(self._error_log)  > 500: self._error_log  = self._error_log[-500:]
+            if len(self._log_buffer) > 2000: self._log_buffer = self._log_buffer[-2000:]
             self._append_log(line)
-            # Erkennung: Server ist bereit
             if "Done" in line and "For help" in line:
                 self.after(0, lambda: self._set_state("online"))
 
@@ -1091,6 +1097,13 @@ class MainApp(ctk.CTk):
         self._log_box = ctk.CTkTextbox(self.content, fg_color=CARD, text_color="#a5d6a7",
                                         font=ctk.CTkFont("Consolas",11), state="disabled")
         self._log_box.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,8))
+
+        # Bisherigen Log-Inhalt wiederherstellen
+        if hasattr(self, "_log_buffer") and self._log_buffer:
+            self._log_box.configure(state="normal")
+            self._log_box.insert("end", "".join(self._log_buffer))
+            self._log_box.see("end")
+            self._log_box.configure(state="disabled")
 
         if not log_only:
             inp = ctk.CTkFrame(self.content, fg_color="transparent")
