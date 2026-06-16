@@ -766,16 +766,27 @@ class MainApp(ctk.CTk):
                       height=36, corner_radius=6,
                       command=self._new_server).pack(padx=8, fill="x")
 
-        # Benutzer + Logout unten
+        # Benutzer + Logout + Duplizieren unten
         bot = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         bot.pack(side="bottom", padx=8, pady=10, fill="x")
         ctk.CTkLabel(bot, text=f"@ {self.username}",
                      text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",10)).pack(anchor="w")
-        ctk.CTkButton(bot, text="Ausloggen", anchor="w",
+        ctk.CTkButton(bot, text="⧉  Fenster duplizieren", anchor="w",
+                      fg_color="transparent", hover_color=CARD,
+                      text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",11),
+                      height=28, corner_radius=6,
+                      command=self._duplicate_window).pack(fill="x", pady=(2,0))
+        row_bot = ctk.CTkFrame(bot, fg_color="transparent")
+        row_bot.pack(fill="x", pady=(2,0))
+        row_bot.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(row_bot, text="Ausloggen", anchor="w",
                       fg_color="transparent", hover_color=CARD,
                       text_color=RED, font=ctk.CTkFont("Segoe UI",11),
                       height=28, corner_radius=6,
-                      command=self._logout).pack(fill="x", pady=(2,0))
+                      command=self._logout).grid(row=0, column=0, sticky="ew")
+        ctk.CTkLabel(row_bot, text="By VisCode",
+                     text_color="#444", font=ctk.CTkFont("Segoe UI",9),
+                     anchor="e").grid(row=0, column=1, padx=(4,0))
 
     # ── Navigation ────────────────────────────────────────────────────────────
     def _clear(self):
@@ -802,6 +813,11 @@ class MainApp(ctk.CTk):
         self._show("dashboard")
 
     def _switch_server_popup(self):
+        # Kein Wechsel wenn Server läuft
+        if self.proc is not None and self.proc.poll() is None:
+            messagebox.showwarning("Server aktiv",
+                "Der Server läuft noch!\nBitte stoppe den Server zuerst, bevor du wechselst.")
+            return
         servers = list_servers()
         if not servers:
             messagebox.showinfo("Keine Server","Erstelle zuerst einen Server.")
@@ -2167,6 +2183,10 @@ class MainApp(ctk.CTk):
         ctk.CTkFrame(f,fg_color=BORDER,height=1).pack(fill="x")
         return f
 
+    def _duplicate_window(self):
+        """Öffnet ein zweites Live-Fenster (Spieler / Dateien) für zweiten Monitor."""
+        SecondaryWindow(self)
+
     def _logout(self):
         clear_session()
         self.destroy()
@@ -2239,6 +2259,208 @@ class SplashScreen(ctk.CTk):
             MainApp(username=saved).mainloop()
         else:
             LoginWindow().mainloop()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SEKUNDÄR-FENSTER  (Duplizierung für zweiten Monitor)
+# ══════════════════════════════════════════════════════════════════════════════
+class SecondaryWindow(ctk.CTkToplevel):
+    """Live-Ansicht eines laufenden Servers auf einem zweiten Monitor."""
+    _SPIN = ["◐","◓","◑","◒"]
+
+    def __init__(self, main: "MainApp"):
+        super().__init__(main)
+        self._main = main
+        self.title(f"MineHost — {main.server_name or 'Kein Server'}")
+        self.geometry("820x600")
+        self.configure(fg_color=BG)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+        # ── Titelleiste ──────────────────────────────────────────────────────
+        bar = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, height=48, corner_radius=0)
+        bar.pack(fill="x")
+        bar.pack_propagate(False)
+        ctk.CTkLabel(bar, image=make_logo(22), text="").pack(side="left", padx=(12,6), pady=10)
+        ctk.CTkLabel(bar, text="MineHost Local  —  Live-Ansicht",
+                     font=ctk.CTkFont("Segoe UI",12,"bold"), text_color=GREEN).pack(side="left")
+        # Status-Chip
+        self._status_lbl = ctk.CTkLabel(bar, text="● Offline",
+                                         font=ctk.CTkFont("Segoe UI",11), text_color=RED)
+        self._status_lbl.pack(side="left", padx=16)
+        ctk.CTkLabel(bar, text="By VisCode",
+                     font=ctk.CTkFont("Segoe UI",9), text_color="#444").pack(side="right", padx=12)
+
+        # ── Tab-Leiste ───────────────────────────────────────────────────────
+        tab_bar = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, height=38, corner_radius=0)
+        tab_bar.pack(fill="x")
+        self._active_tab = ctk.StringVar(value="players")
+        for key, label in [("players","👥  Spieler"), ("files","📁  Dateien"), ("log","📋  Log")]:
+            ctk.CTkButton(tab_bar, text=label,
+                          fg_color="transparent", hover_color=CARD,
+                          text_color=TEXT, font=ctk.CTkFont("Segoe UI",12),
+                          height=38, corner_radius=0,
+                          command=lambda k=key: self._switch_tab(k)).pack(side="left", padx=2)
+
+        # ── Inhalts-Bereich ──────────────────────────────────────────────────
+        self._content = ctk.CTkFrame(self, fg_color="transparent")
+        self._content.pack(fill="both", expand=True, padx=16, pady=12)
+
+        self._switch_tab("players")
+        self._poll()   # Live-Updates starten
+
+    # ── Tab wechseln ─────────────────────────────────────────────────────────
+    def _switch_tab(self, key):
+        self._active_tab.set(key)
+        for w in self._content.winfo_children(): w.destroy()
+        if key == "players":  self._tab_players()
+        elif key == "files":  self._tab_files()
+        elif key == "log":    self._tab_log()
+
+    # ── Tab: Spieler ─────────────────────────────────────────────────────────
+    def _tab_players(self):
+        srv_dir = Path(self._main.cfg.get("dir","")) if self._main.cfg else None
+        ctk.CTkLabel(self._content, text="Aktuell verbundene Spieler",
+                     font=ctk.CTkFont("Segoe UI",14,"bold"), text_color=TEXT).pack(anchor="w", pady=(0,8))
+        box = ctk.CTkScrollableFrame(self._content, fg_color=SIDEBAR_BG, corner_radius=10)
+        box.pack(fill="both", expand=True)
+
+        players = []
+        # Spieler aus latest.log parsen (join/leave tracking)
+        if srv_dir:
+            log_file = srv_dir / "logs" / "latest.log"
+            if log_file.exists():
+                try:
+                    online = set()
+                    for line in log_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                        m = __import__("re").search(r": (\w+) joined the game", line)
+                        if m: online.add(m.group(1))
+                        m = __import__("re").search(r": (\w+) left the game", line)
+                        if m: online.discard(m.group(1))
+                    players = sorted(online)
+                except: pass
+
+        if not players:
+            ctk.CTkLabel(box, text="Keine Spieler online" if self._main.proc and self._main.proc.poll() is None
+                         else "Server ist offline",
+                         text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",13)).pack(pady=40)
+        else:
+            for p in players:
+                row = ctk.CTkFrame(box, fg_color=CARD, corner_radius=8)
+                row.pack(fill="x", padx=8, pady=3)
+                ctk.CTkLabel(row, text="🟢", font=ctk.CTkFont("Segoe UI",12)).pack(side="left", padx=(12,6), pady=10)
+                ctk.CTkLabel(row, text=p, font=ctk.CTkFont("Segoe UI",13,"bold"),
+                             text_color=TEXT).pack(side="left")
+
+    # ── Tab: Dateien ─────────────────────────────────────────────────────────
+    def _tab_files(self):
+        srv_dir = Path(self._main.cfg.get("dir","")) if self._main.cfg else None
+        ctk.CTkLabel(self._content, text="Server-Ordner",
+                     font=ctk.CTkFont("Segoe UI",14,"bold"), text_color=TEXT).pack(anchor="w", pady=(0,8))
+
+        if not srv_dir or not srv_dir.exists():
+            ctk.CTkLabel(self._content, text="Kein Server-Ordner gefunden.",
+                         text_color=TEXT_MUTED).pack(pady=40)
+            return
+
+        self._cur_dir = [srv_dir]
+        box = ctk.CTkScrollableFrame(self._content, fg_color=SIDEBAR_BG, corner_radius=10)
+        box.pack(fill="both", expand=True)
+        self._file_box   = box
+        self._render_files()
+
+    def _render_files(self):
+        for w in self._file_box.winfo_children(): w.destroy()
+        cur = self._cur_dir[-1]
+        # Pfad-Zeile
+        path_row = ctk.CTkFrame(self._file_box, fg_color="transparent")
+        path_row.pack(fill="x", padx=8, pady=(6,4))
+        if len(self._cur_dir) > 1:
+            ctk.CTkButton(path_row, text="← Zurück", width=80, height=28,
+                          fg_color=CARD, hover_color=BORDER, text_color=TEXT,
+                          font=ctk.CTkFont("Segoe UI",11), corner_radius=6,
+                          command=self._go_up).pack(side="left", padx=(0,8))
+        ctk.CTkLabel(path_row, text=str(cur), text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",10)).pack(side="left")
+        # Einträge
+        try:
+            entries = sorted(cur.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+        except: entries = []
+        for p in entries:
+            row = ctk.CTkFrame(self._file_box, fg_color=CARD, corner_radius=6)
+            row.pack(fill="x", padx=8, pady=2)
+            icon = "📁" if p.is_dir() else "📄"
+            ctk.CTkLabel(row, text=icon, font=ctk.CTkFont("Segoe UI",12)).pack(side="left", padx=(10,6), pady=8)
+            ctk.CTkLabel(row, text=p.name, font=ctk.CTkFont("Segoe UI",12),
+                         text_color=TEXT).pack(side="left")
+            if p.is_file():
+                sz = p.stat().st_size
+                sz_txt = f"{sz//1024} KB" if sz > 1024 else f"{sz} B"
+                ctk.CTkLabel(row, text=sz_txt, text_color=TEXT_MUTED,
+                             font=ctk.CTkFont("Segoe UI",10)).pack(side="right", padx=10)
+            if p.is_dir():
+                def go(path=p): self._cur_dir.append(path); self._render_files()
+                row.bind("<Button-1>", lambda e, fn=go: fn())
+                for child in row.winfo_children():
+                    child.bind("<Button-1>", lambda e, fn=go: fn())
+
+    def _go_up(self):
+        if len(self._cur_dir) > 1: self._cur_dir.pop()
+        self._render_files()
+
+    # ── Tab: Log ─────────────────────────────────────────────────────────────
+    def _tab_log(self):
+        ctk.CTkLabel(self._content, text="Server-Log",
+                     font=ctk.CTkFont("Segoe UI",14,"bold"), text_color=TEXT).pack(anchor="w", pady=(0,8))
+        import tkinter as _tk
+        self._sec_log_box = _tk.Text(self._content, bg="#1a1a2e", fg="#a5d6a7",
+                                      font=("Consolas",10), state="disabled",
+                                      wrap="word", relief="flat", borderwidth=0)
+        self._sec_log_box.pack(fill="both", expand=True)
+        self._sec_log_box.tag_config("error", foreground="#ff5252")
+        self._sec_log_box.tag_config("warn",  foreground="#ffd600")
+        self._sec_log_box.tag_config("done",  foreground="#00e676")
+        # Buffer aus Hauptfenster laden
+        buf = getattr(self._main, "_log_buffer", [])
+        self._sec_log_box.configure(state="normal")
+        for line in buf:
+            tag = self._main._log_tag(line) if hasattr(self._main, "_log_tag") else "info"
+            self._sec_log_box.insert("end", line, tag)
+        self._sec_log_box.see("end")
+        self._sec_log_box.configure(state="disabled")
+        self._last_log_len = len(buf)
+
+    # ── Live-Polling (alle 2s) ────────────────────────────────────────────────
+    def _poll(self):
+        try:
+            # Status-Chip aktualisieren
+            state = getattr(self._main, "_server_state", "offline")
+            is_on = self._main.proc is not None and self._main.proc.poll() is None
+            if is_on and state == "online":
+                self._status_lbl.configure(text="● Online", text_color=GREEN)
+            elif state == "starting":
+                self._status_lbl.configure(text="⟳ Startet…", text_color="#f39c12")
+            else:
+                self._status_lbl.configure(text="● Offline", text_color=RED)
+
+            # Log-Tab live nachführen
+            if self._active_tab.get() == "log" and hasattr(self, "_sec_log_box"):
+                buf = getattr(self._main, "_log_buffer", [])
+                if len(buf) > self._last_log_len:
+                    new_lines = buf[self._last_log_len:]
+                    self._sec_log_box.configure(state="normal")
+                    for line in new_lines:
+                        tag = self._main._log_tag(line) if hasattr(self._main, "_log_tag") else "info"
+                        self._sec_log_box.insert("end", line, tag)
+                    self._sec_log_box.see("end")
+                    self._sec_log_box.configure(state="disabled")
+                    self._last_log_len = len(buf)
+
+            # Spieler-Tab alle 5s aktualisieren
+            if self._active_tab.get() == "players":
+                self._switch_tab("players")
+        except Exception:
+            pass
+        self.after(2000, self._poll)
 
 
 if __name__ == "__main__":
