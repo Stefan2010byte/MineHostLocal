@@ -254,9 +254,28 @@ class PlayitManager:
         self.on_address = None   # on_address(addr: str)
         self.on_log     = None   # on_log(line: str)
 
+    def _kill_existing(self):
+        """Beendet alle laufenden playit.exe Instanzen."""
+        try:
+            for p in psutil.process_iter(["name"]):
+                try:
+                    if "playit" in (p.info["name"] or "").lower():
+                        p.kill()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def start(self):
         """Startet playit.exe (download falls nötig) im Hintergrund."""
         def _launch():
+            import time as _t
+
+            # 1. Vorherige Instanzen beenden (verhindert "already running")
+            self._kill_existing()
+            _t.sleep(0.8)
+
+            # 2. Download falls nötig
             if not PLAYIT_EXE.exists():
                 if self.on_log: self.on_log("[playit.gg] Lade Agent herunter…\n")
                 done_ev = threading.Event()
@@ -269,11 +288,22 @@ class PlayitManager:
                     if self.on_log: self.on_log("[playit.gg] Download fehlgeschlagen.\n")
                     return
 
-            if self.on_log: self.on_log("[playit.gg] Starte Tunnel…\n")
+            # 3. Secret Key aus toml lesen und als --secret übergeben
+            secret_key = ""
+            if self.toml_path.exists():
+                secret_key = self.toml_path.read_text(encoding="utf-8").strip()
+
+            if not secret_key:
+                if self.on_log: self.on_log("[playit.gg] Kein Secret Key vorhanden.\n")
+                return
+
+            if self.on_log:
+                self.on_log(f"[playit.gg] Starte Tunnel mit Secret Key…\n")
+
             try:
-                # Starte im Server-Ordner damit playit.toml dort gespeichert wird
                 self.proc = subprocess.Popen(
-                    [str(PLAYIT_EXE)],
+                    [str(PLAYIT_EXE), "--secret", secret_key,
+                     "--secret-path", str(self.toml_path)],
                     cwd=str(self.srv_dir),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -1333,18 +1363,97 @@ class MainApp(ctk.CTk):
             self.after(0, lambda: self._set_state("offline"))
 
     def _start_playit(self):
-        srv_dir = Path(self.cfg.get("dir", ""))
-        mgr = PlayitManager(srv_dir)
+        srv_dir    = Path(self.cfg.get("dir", ""))
+        toml_path  = srv_dir / "playit.toml"
 
-        def on_claim(url):
-            self._playit_claim = url
-            self._append_log(f"[playit.gg] ► Registrierung nötig: {url}\n")
+        # Gespeicherte Adresse sofort anzeigen (aus letzter Session)
+        saved_addr = self.cfg.get("playit_address")
+        if saved_addr:
+            self._playit_addr = saved_addr
             self.after(0, self._refresh_dashboard)
+
+        # Prüfe ob Secret vorhanden
+        secret_key = ""
+        if toml_path.exists():
+            secret_key = toml_path.read_text(encoding="utf-8").strip()
+
+        if not secret_key:
+            # Kein Secret → Setup-Dialog anzeigen
+            self.after(0, lambda: self._show_playit_setup(srv_dir, toml_path))
+            return
+
+        self._launch_playit_with_secret(srv_dir, toml_path, secret_key)
+
+    def _show_playit_setup(self, srv_dir, toml_path):
+        """Dialog: Nutzer gibt Secret Key von playit.gg ein."""
+        win = ctk.CTkToplevel(self)
+        win.title("playit.gg einrichten")
+        win.geometry("560x480")
+        win.configure(fg_color=SIDEBAR_BG)
+        win.grab_set()
+        win.resizable(False, False)
+
+        ctk.CTkLabel(win, text="🌐  Tunnel einrichten",
+                     font=ctk.CTkFont("Segoe UI",18,"bold"), text_color=TEXT).pack(pady=(24,4))
+        ctk.CTkLabel(win, text="Für eine öffentliche Adresse brauchst du einen\nkostenlosen playit.gg Account.",
+                     font=ctk.CTkFont("Segoe UI",12), text_color=TEXT_MUTED, justify="center").pack()
+
+        # Schritt-Anleitung
+        steps = ctk.CTkFrame(win, fg_color=CARD, corner_radius=10)
+        steps.pack(padx=24, pady=16, fill="x")
+        for i, (txt, sub) in enumerate([
+            ("1.  playit.gg öffnen", "Klick auf den Button unten"),
+            ("2.  Account erstellen / einloggen", "Kostenlos, kein Kreditkarte"),
+            ("3.  'Agent hinzufügen' → Secret Key kopieren", "Im Dashboard → Setup → Secret Key"),
+            ("4.  Secret Key hier einfügen", "Der Key ist ~64 Zeichen lang"),
+        ], 1):
+            r = ctk.CTkFrame(steps, fg_color="transparent")
+            r.pack(fill="x", padx=12, pady=6)
+            ctk.CTkLabel(r, text=txt, text_color=GREEN if i<=2 else TEXT,
+                         font=ctk.CTkFont("Segoe UI",12,"bold"), anchor="w").pack(anchor="w")
+            ctk.CTkLabel(r, text=sub, text_color=TEXT_MUTED,
+                         font=ctk.CTkFont("Segoe UI",10), anchor="w").pack(anchor="w")
+
+        ctk.CTkButton(win, text="🌐  playit.gg im Browser öffnen",
+                      fg_color=BLUE, hover_color="#1a6bbf", text_color="#fff",
+                      font=ctk.CTkFont("Segoe UI",13,"bold"), height=40, corner_radius=8,
+                      command=lambda: __import__("webbrowser").open("https://playit.gg/login")
+                      ).pack(padx=24, pady=(0,12), fill="x")
+
+        ctk.CTkLabel(win, text="Secret Key einfügen:",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",11), anchor="w"
+                     ).pack(padx=24, anchor="w")
+        key_entry = ctk.CTkEntry(win, placeholder_text="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                                  fg_color=CARD, border_color=GREEN, text_color=TEXT,
+                                  font=ctk.CTkFont("Consolas",12), height=40)
+        key_entry.pack(padx=24, pady=(4,0), fill="x")
+
+        status_lbl = ctk.CTkLabel(win, text="", text_color=RED,
+                                   font=ctk.CTkFont("Segoe UI",10))
+        status_lbl.pack(pady=(4,0))
+
+        def _save():
+            key = key_entry.get().strip()
+            if len(key) < 20:
+                status_lbl.configure(text="Secret Key ist zu kurz. Bitte nochmal prüfen.")
+                return
+            toml_path.write_text(key, encoding="utf-8")
+            win.destroy()
+            self._append_log(f"[playit.gg] ✓ Secret Key gespeichert. Starte Tunnel…\n")
+            self._launch_playit_with_secret(srv_dir, toml_path, key)
+
+        ctk.CTkButton(win, text="✓  Speichern & Tunnel starten",
+                      fg_color=GREEN, hover_color=GREEN_HOV, text_color="#000",
+                      font=ctk.CTkFont("Segoe UI",14,"bold"), height=46, corner_radius=8,
+                      command=_save).pack(padx=24, pady=12, fill="x")
+
+    def _launch_playit_with_secret(self, srv_dir, toml_path, secret_key):
+        """Startet playit.exe mit dem gespeicherten Secret Key."""
+        mgr = PlayitManager(srv_dir)
 
         def on_address(addr):
             self._playit_addr  = addr
-            self._playit_claim = None   # Claim erledigt
-            # Adresse permanent in Config speichern
+            self._playit_claim = None
             self.cfg["playit_address"] = addr
             save_server_cfg(self.server_name, self.cfg)
             self._append_log(f"[playit.gg] ✓ Tunnel aktiv: {addr}\n")
@@ -1353,14 +1462,9 @@ class MainApp(ctk.CTk):
         def on_log(line):
             self._append_log(line)
 
-        # Gespeicherte Adresse aus letzter Session laden
-        saved_addr = self.cfg.get("playit_address")
-        if saved_addr:
-            self._playit_addr = saved_addr
-
-        mgr.on_claim   = on_claim
         mgr.on_address = on_address
         mgr.on_log     = on_log
+        # on_claim nicht mehr nötig — Secret ist bereits vorhanden
         self._playit_mgr = mgr
         mgr.start()
 
