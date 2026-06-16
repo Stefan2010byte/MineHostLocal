@@ -967,10 +967,50 @@ class MainApp(ctk.CTk):
             ctk.CTkFrame(info_frame, fg_color=BORDER, height=1).pack(fill="x")
 
         local_val  = f"localhost:{cfg.get('port','25565')}"
-        public_val = self._playit_addr or ("Startet Server zuerst…" if state=="offline" else "Tunnel verbindet…")
         info_row("Lokale Adresse", local_val, copy=(state!="offline"))
-        info_row("Öffentliche Adresse (playit.gg)", public_val,
-                 copy=bool(self._playit_addr))
+
+        # Öffentliche Adresse – mit Ladekreis solange Tunnel noch verbindet
+        pub_frame = ctk.CTkFrame(info_frame, fg_color="transparent")
+        pub_frame.pack(fill="x")
+        pub_frame.grid_columnconfigure(0, weight=1)
+        pub_lf = ctk.CTkFrame(pub_frame, fg_color="transparent")
+        pub_lf.grid(row=0, column=0, padx=14, pady=10, sticky="w")
+        ctk.CTkLabel(pub_lf, text="Öffentliche Adresse (playit.gg)",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",11,"bold")).pack(anchor="w")
+
+        if self._playit_addr:
+            # Adresse bekannt → Text + Kopieren-Button
+            ctk.CTkLabel(pub_lf, text=self._playit_addr,
+                         text_color=TEXT, font=ctk.CTkFont("Segoe UI",13)).pack(anchor="w")
+            def _copy_pub():
+                self.clipboard_clear(); self.clipboard_append(self._playit_addr)
+            ctk.CTkButton(pub_frame, text="Kopieren", width=90, height=30,
+                          fg_color=BLUE, hover_color="#1a6bbf", corner_radius=6,
+                          font=ctk.CTkFont("Segoe UI",11),
+                          command=_copy_pub).grid(row=0, column=1, padx=14)
+        elif state == "offline":
+            ctk.CTkLabel(pub_lf, text="Startet Server zuerst…",
+                         text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",13)).pack(anchor="w")
+        else:
+            # Tunnel verbindet → Ladekreis + "Laden..." in grau
+            spin_row = ctk.CTkFrame(pub_lf, fg_color="transparent")
+            spin_row.pack(anchor="w")
+            _spin_chars = ["◐","◓","◑","◒"]
+            _spin_lbl = ctk.CTkLabel(spin_row, text=_spin_chars[0],
+                                     text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",15))
+            _spin_lbl.pack(side="left", padx=(0,6))
+            ctk.CTkLabel(spin_row, text="Laden…",
+                         text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",13)).pack(side="left")
+            _spin_idx = [0]
+            def _animate():
+                if not self._playit_addr and getattr(self,"_server_state","offline")!="offline":
+                    _spin_idx[0] = (_spin_idx[0]+1) % len(_spin_chars)
+                    try: _spin_lbl.configure(text=_spin_chars[_spin_idx[0]])
+                    except: return
+                    self.after(250, _animate)
+            self.after(250, _animate)
+
+        ctk.CTkFrame(info_frame, fg_color=BORDER, height=1).pack(fill="x")
 
         # Claim-Button falls playit noch nicht registriert
         if self._playit_claim:
