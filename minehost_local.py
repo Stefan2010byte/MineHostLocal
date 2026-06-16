@@ -950,6 +950,18 @@ class MainApp(ctk.CTk):
                         "Fehler", f"Java-Installation fehlgeschlagen:\n{e}"))
                 )
             return
+        # Vorherige Java-Prozesse killen die die Log-Datei sperren könnten
+        for p in psutil.process_iter(["name","pid"]):
+            try:
+                if p.info["name"] and "java" in p.info["name"].lower():
+                    p.kill()
+            except: pass
+        # Log-Datei entsperren
+        log_file = srv_dir / "logs" / "latest.log"
+        if log_file.exists():
+            try: log_file.unlink()
+            except: pass
+
         self._error_log = []
         try:
             self.proc = subprocess.Popen(
@@ -1070,11 +1082,21 @@ class MainApp(ctk.CTk):
             if "Done" in line and "For help" in line:
                 self.after(0, lambda: self._set_state("online"))
 
+    def _log_tag(self, line):
+        u = line.upper()
+        if "ERROR" in u or "EXCEPTION" in u or "FAILED" in u or "FATAL" in u:
+            return "error"
+        if "WARN" in u:
+            return "warn"
+        if "DONE" in u and "FOR HELP" in u:
+            return "done"
+        return "info"
+
     def _append_log(self, text):
-        if hasattr(self,"_log_box"):
+        if hasattr(self, "_log_box"):
             try:
                 self._log_box.configure(state="normal")
-                self._log_box.insert("end", text)
+                self._log_box.insert("end", text, self._log_tag(text))
                 self._log_box.see("end")
                 self._log_box.configure(state="disabled")
             except: pass
@@ -1094,14 +1116,27 @@ class MainApp(ctk.CTk):
 
         hdr = self._page_header("Log" if log_only else "Konsole")
 
-        self._log_box = ctk.CTkTextbox(self.content, fg_color=CARD, text_color="#a5d6a7",
-                                        font=ctk.CTkFont("Consolas",11), state="disabled")
+        # tk.Text statt CTkTextbox — unterstützt farbige Tags
+        self._log_box = tk.Text(self.content, bg="#21263a", fg="#a5d6a7",
+                                 font=("Consolas",11), state="disabled",
+                                 relief="flat", bd=0, insertbackground="#a5d6a7",
+                                 selectbackground="#2979ff", wrap="none")
         self._log_box.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,8))
+        # Farb-Tags
+        self._log_box.tag_config("error", foreground="#ff5252")
+        self._log_box.tag_config("warn",  foreground="#ffd600")
+        self._log_box.tag_config("info",  foreground="#a5d6a7")
+        self._log_box.tag_config("done",  foreground="#00e676")
+        # Scrollbar
+        sb = tk.Scrollbar(self.content, command=self._log_box.yview, bg="#1a1d24")
+        self._log_box.configure(yscrollcommand=sb.set)
+        sb.grid(row=1, column=1, sticky="ns", pady=(0,8))
 
         # Bisherigen Log-Inhalt wiederherstellen
         if hasattr(self, "_log_buffer") and self._log_buffer:
             self._log_box.configure(state="normal")
-            self._log_box.insert("end", "".join(self._log_buffer))
+            for line in self._log_buffer:
+                self._log_box.insert("end", line, self._log_tag(line))
             self._log_box.see("end")
             self._log_box.configure(state="disabled")
 
