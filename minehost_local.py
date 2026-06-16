@@ -18,8 +18,11 @@ USERS_DB    = APP_DIR / "users.json"
 SERVERS_DIR = APP_DIR / "servers"
 ACCESS_DB   = APP_DIR / "access.json"
 SESSION_F   = APP_DIR / "session.json"
+PLAYIT_EXE  = APP_DIR / "playit.exe"
 APP_DIR.mkdir(parents=True, exist_ok=True)
 SERVERS_DIR.mkdir(exist_ok=True)
+
+PLAYIT_URL  = "https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-windows_amd64.exe"
 
 # ── Aternos-Farben ────────────────────────────────────────────────────────────
 BG          = "#111317"
@@ -133,6 +136,28 @@ def find_java_exe():
 
 def java_available():
     return find_java_exe() is not None
+
+def download_playit(on_done=None, on_progress=None):
+    """Lädt playit.exe herunter falls noch nicht vorhanden."""
+    def run():
+        if PLAYIT_EXE.exists():
+            if on_done: on_done()
+            return
+        try:
+            if on_progress: on_progress("Lade playit.gg Agent herunter…")
+            r = requests.get(PLAYIT_URL, stream=True, timeout=60)
+            total = int(r.headers.get("content-length", 0))
+            done  = 0
+            with open(PLAYIT_EXE, "wb") as fh:
+                for chunk in r.iter_content(8192):
+                    fh.write(chunk)
+                    done += len(chunk)
+                    if on_progress and total:
+                        on_progress(f"Lade playit.gg… {done*100//total}%")
+            if on_done: on_done()
+        except Exception as e:
+            if on_progress: on_progress(f"Download fehlgeschlagen: {e}")
+    threading.Thread(target=run, daemon=True).start()
 
 def install_java_background(on_done=None, on_error=None):
     """Installiert Eclipse Temurin 21 (LTS) via winget im Hintergrund."""
@@ -512,10 +537,13 @@ class CreateServerWindow(ctk.CTkToplevel):
 class MainApp(ctk.CTk):
     def __init__(self, username):
         super().__init__()
-        self.username    = username
-        self.server_name = None   # safe folder name
-        self.cfg         = {}
-        self.proc        = None
+        self.username     = username
+        self.server_name  = None
+        self.cfg          = {}
+        self.proc         = None
+        self.playit_proc  = None
+        self._playit_addr = None   # öffentliche Adresse von playit.gg
+        self._server_state = "offline"
         self.title("MineHost Local")
         self.geometry("1200x750")
         self.minsize(1000,640)
@@ -814,8 +842,11 @@ class MainApp(ctk.CTk):
             # Trennlinie
             ctk.CTkFrame(info_frame, fg_color=BORDER, height=1).pack(fill="x")
 
-        addr_val = f"{cfg.get('address','localhost')}:{cfg.get('port','25565')}"
-        info_row("Adresse", addr_val, copy=True)
+        local_val  = f"localhost:{cfg.get('port','25565')}"
+        public_val = self._playit_addr or ("Startet Server zuerst…" if state=="offline" else "Tunnel verbindet…")
+        info_row("Lokale Adresse", local_val, copy=(state!="offline"))
+        info_row("Öffentliche Adresse (playit.gg)", public_val,
+                 copy=bool(self._playit_addr))
         info_row("Software", cfg.get("type_label", cfg.get("type","Vanilla")).capitalize(),
                  btn_text="Ändern", btn_cmd=lambda: self._show("software"))
         info_row("Version", cfg.get("mc_version","?"),
@@ -903,8 +934,9 @@ class MainApp(ctk.CTk):
             return
         self._set_state("starting")
         threading.Thread(target=self._read_log, daemon=True).start()
-        # Watchdog: prüft ob Prozess stirbt bevor er "Done" meldet
         threading.Thread(target=self._watchdog, daemon=True).start()
+        # playit.gg starten
+        self._start_playit(port=self.cfg.get("port","25565"))
 
     def _watchdog(self):
         """Wartet darauf dass der Prozess endet ohne 'Done' → Fehler."""
@@ -916,11 +948,66 @@ class MainApp(ctk.CTk):
             elif state == "online":   # Normal beendet
                 self.after(0, lambda: self._set_state("offline"))
 
+    def _start_playit(self, port="25565"):
+        """Startet playit.gg Agent und liest die öffentliche Adresse aus dem Output."""
+        def do():
+            if not PLAYIT_EXE.exists():
+                self._append_log("[playit.gg] Wird heruntergeladen…\n")
+                done_event = threading.Event()
+                download_playit(
+                    on_done=done_event.set,
+                    on_progress=lambda m: self._append_log(f"[playit.gg] {m}\n")
+                )
+                done_event.wait(timeout=120)
+                if not PLAYIT_EXE.exists():
+                    self._append_log("[playit.gg] Download fehlgeschlagen.\n")
+                    return
+
+            try:
+                self.playit_proc = subprocess.Popen(
+                    [str(PLAYIT_EXE)],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1
+                )
+            except Exception as e:
+                self._append_log(f"[playit.gg] Startfehler: {e}\n")
+                return
+
+            self._append_log("[playit.gg] Agent gestartet — warte auf Tunnel-Adresse…\n")
+            for line in self.playit_proc.stdout:
+                self._append_log(f"[playit.gg] {line}")
+                # Adresse parsen: "tunnel address: xxx.at.playit.gg:25565"
+                low = line.lower()
+                if "tunnel address" in low or "alloc address" in low or ".playit.gg" in low:
+                    import re
+                    m = re.search(r"([\w\-]+\.playit\.gg:\d+)", line)
+                    if m:
+                        self._playit_addr = m.group(1)
+                        self._append_log(f"[playit.gg] ✓ Öffentliche Adresse: {self._playit_addr}\n")
+                        self.after(0, lambda: self._refresh_dashboard_addr())
+                # Claim-Link anzeigen
+                if "playit.gg/claim/" in line or "playit.gg/account" in line:
+                    import re
+                    m = re.search(r"https://\S+", line)
+                    if m:
+                        self._append_log(f"[playit.gg] → Konto verknüpfen: {m.group(0)}\n")
+
+        threading.Thread(target=do, daemon=True).start()
+
+    def _refresh_dashboard_addr(self):
+        if getattr(self, "_active_page", "") == "dashboard":
+            self._p_dashboard()
+
     def _stop(self):
         if self.proc:
             try: self.proc.stdin.write("stop\n"); self.proc.stdin.flush(); self.proc.wait(timeout=15)
             except: self.proc.kill()
             self.proc = None
+        if self.playit_proc:
+            try: self.playit_proc.kill()
+            except: pass
+            self.playit_proc = None
+        self._playit_addr = None
         self._set_state("offline")
 
     def _show_error(self):
