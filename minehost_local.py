@@ -1072,7 +1072,10 @@ class MainApp(ctk.CTk):
         self._error_log = []
         try:
             self.proc = subprocess.Popen(
-                [java, "-Xmx2G", "-Xms512M", "-jar", "server.jar", "--nogui"],
+                [java,
+                 f"-Xmx{self.cfg.get('ram_mb',2048)}M",
+                 f"-Xms{min(512, self.cfg.get('ram_mb',2048))}M",
+                 "-jar", "server.jar", "--nogui"],
                 cwd=str(srv_dir), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1
@@ -1081,20 +1084,42 @@ class MainApp(ctk.CTk):
             self._error_log = [str(e)]
             self._set_state("error")
             return
+        self._online_count = 0
         self._set_state("starting")
         threading.Thread(target=self._read_log, daemon=True).start()
         threading.Thread(target=self._watchdog, daemon=True).start()
         self._start_playit()
 
     def _watchdog(self):
-        """Wartet darauf dass der Prozess endet ohne 'Done' → Fehler."""
-        if self.proc:
-            self.proc.wait()
-            state = getattr(self, "_server_state", "offline")
-            if state == "starting":   # Prozess gestorben bevor Online
-                self.after(0, lambda: self._set_state("error"))
-            elif state == "online":   # Normal beendet
-                self.after(0, lambda: self._set_state("offline"))
+        """Wartet darauf dass der Prozess endet; überwacht auch Auto-Stop."""
+        if not self.proc:
+            return
+        import time as _time
+        empty_since = None   # Zeitpunkt wann zuletzt 0 Spieler festgestellt
+
+        while self.proc.poll() is None:
+            _time.sleep(10)
+            # Auto-Stop: Spielerzahl aus _online_count prüfen
+            if getattr(self, "_server_state", "") == "online":
+                autostop_en  = self.cfg.get("autostop_enabled", False)
+                autostop_min = int(self.cfg.get("autostop_minutes", 3))
+                if autostop_en:
+                    count = getattr(self, "_online_count", 0)
+                    if count == 0:
+                        if empty_since is None:
+                            empty_since = _time.monotonic()
+                        elif _time.monotonic() - empty_since >= autostop_min * 60:
+                            self._append_log(f"[MineHost] Kein Spieler seit {autostop_min} Min → Auto-Stop\n")
+                            self.after(0, self._stop)
+                            return
+                    else:
+                        empty_since = None
+
+        state = getattr(self, "_server_state", "offline")
+        if state == "starting":
+            self.after(0, lambda: self._set_state("error"))
+        elif state == "online":
+            self.after(0, lambda: self._set_state("offline"))
 
     def _start_playit(self):
         srv_dir = Path(self.cfg.get("dir", ""))
@@ -1175,6 +1200,11 @@ class MainApp(ctk.CTk):
             self._append_log(line)
             if "Done" in line and "For help" in line:
                 self.after(0, lambda: self._set_state("online"))
+            # Spielerzahl tracken für Auto-Stop
+            if "joined the game" in line:
+                self._online_count = getattr(self, "_online_count", 0) + 1
+            elif "left the game" in line:
+                self._online_count = max(0, getattr(self, "_online_count", 1) - 1)
 
     def _log_tag(self, line):
         u = line.upper()
@@ -1264,7 +1294,7 @@ class MainApp(ctk.CTk):
     # PAGE: OPTIONEN
     # ═════════════════════════════════════════════════════════════════════════
     def _p_options(self):
-        hdr = self._page_header("Optionen")
+        self._page_header("Optionen")
         if not self.server_name:
             ctk.CTkLabel(self.content, text="Kein Server.", text_color=TEXT_MUTED).grid(row=1,column=0); return
 
@@ -1287,13 +1317,15 @@ class MainApp(ctk.CTk):
         scroll.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,8))
         widgets = {}
 
-        # Aternos-Optionen-Panel
         def section(title):
             ctk.CTkLabel(scroll, text=title, text_color=TEXT_MUTED,
                          font=ctk.CTkFont("Segoe UI",11,"bold")).pack(anchor="w", pady=(14,4))
             f = ctk.CTkFrame(scroll, fg_color=SIDEBAR_BG, corner_radius=10)
             f.pack(fill="x")
             return f
+
+        def divider(parent):
+            ctk.CTkFrame(parent, fg_color=BORDER, height=1).pack(fill="x")
 
         def toggle_row(parent, key, label, default="false"):
             var = ctk.BooleanVar(value=props.get(key,default)=="true")
@@ -1307,10 +1339,10 @@ class MainApp(ctk.CTk):
             sw = ctk.CTkSwitch(row, variable=var, text="",
                                 progress_color=GREEN, button_color=TEXT)
             sw.grid(row=0,column=1,padx=14)
-            ctk.CTkFrame(parent,fg_color=BORDER,height=1).pack(fill="x")
+            divider(parent)
             widgets[key]=("bool",var)
 
-        def drop_row(parent, key, label, opts, default=""):
+        def drop_row(parent, key, label, opts, display_opts=None, default=""):
             var = ctk.StringVar(value=props.get(key,default))
             row = ctk.CTkFrame(parent, fg_color="transparent")
             row.pack(fill="x")
@@ -1319,11 +1351,16 @@ class MainApp(ctk.CTk):
             lf.grid(row=0,column=0,padx=14,pady=10,sticky="w")
             ctk.CTkLabel(lf,text=label,text_color=TEXT,font=ctk.CTkFont("Segoe UI",13)).pack(anchor="w")
             ctk.CTkLabel(lf,text=key,text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",9)).pack(anchor="w")
-            ctk.CTkOptionMenu(row, variable=var, values=opts,
-                               fg_color=CARD, button_color=BLUE,
-                               width=160,font=ctk.CTkFont("Segoe UI",12)
+            shown = display_opts or opts
+            dvar = ctk.StringVar(value=shown[opts.index(var.get())] if var.get() in opts else (shown[0] if shown else ""))
+            def on_drop(val):
+                idx = shown.index(val) if val in shown else 0
+                var.set(opts[idx])
+            ctk.CTkOptionMenu(row, variable=dvar, values=shown,
+                               fg_color=CARD, button_color=BLUE, command=on_drop,
+                               width=180, font=ctk.CTkFont("Segoe UI",12)
                                ).grid(row=0,column=1,padx=14)
-            ctk.CTkFrame(parent,fg_color=BORDER,height=1).pack(fill="x")
+            divider(parent)
             widgets[key]=("str",var)
 
         def entry_row(parent, key, label, default=""):
@@ -1339,43 +1376,253 @@ class MainApp(ctk.CTk):
                               width=180, font=ctk.CTkFont("Segoe UI",12))
             e.insert(0,val)
             e.grid(row=0,column=1,padx=14,pady=8)
-            ctk.CTkFrame(parent,fg_color=BORDER,height=1).pack(fill="x")
+            divider(parent)
             widgets[key]=("entry",e)
 
-        p1 = section("Allgemein")
-        drop_row(p1,"difficulty","Schwierigkeitsgrad",["peaceful","easy","normal","hard"],"normal")
-        drop_row(p1,"gamemode","Spielmodus",["survival","creative","adventure","spectator"],"survival")
-        entry_row(p1,"max-players","Spieler (max-players)","20")
-        entry_row(p1,"view-distance","Sichtweite (Chunks)","10")
-        entry_row(p1,"player-idle-timeout","Idle Timeout (Minuten, 0=aus)","0")
-        entry_row(p1,"spawn-protection","Spawn-Schutz (Radius in Blöcken)","16")
+        def stepper_row(parent, key, label, default="20", min_v=1, max_v=999):
+            try: cur = int(props.get(key, default))
+            except: cur = int(default)
+            var = ctk.IntVar(value=cur)
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x")
+            row.grid_columnconfigure(0, weight=1)
+            lf = ctk.CTkFrame(row, fg_color="transparent")
+            lf.grid(row=0,column=0,padx=14,pady=10,sticky="w")
+            ctk.CTkLabel(lf,text=label,text_color=TEXT,font=ctk.CTkFont("Segoe UI",13)).pack(anchor="w")
+            ctk.CTkLabel(lf,text=key,text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",9)).pack(anchor="w")
+            ctrl = ctk.CTkFrame(row, fg_color="transparent")
+            ctrl.grid(row=0,column=1,padx=14)
+            val_lbl = ctk.CTkLabel(ctrl, textvariable=var, text_color=TEXT,
+                                   font=ctk.CTkFont("Segoe UI",14,"bold"), width=52)
+            def dec():
+                v = max(min_v, var.get()-1); var.set(v)
+            def inc():
+                v = min(max_v, var.get()+1); var.set(v)
+            ctk.CTkButton(ctrl,text="−",width=32,height=32,fg_color=CARD,hover_color=BORDER,
+                          font=ctk.CTkFont("Segoe UI",16),corner_radius=6,command=dec).pack(side="left")
+            val_lbl.pack(side="left",padx=6)
+            ctk.CTkButton(ctrl,text="+",width=32,height=32,fg_color=CARD,hover_color=BORDER,
+                          font=ctk.CTkFont("Segoe UI",16),corner_radius=6,command=inc).pack(side="left")
+            divider(parent)
+            widgets[key]=("int",var)
 
-        p2 = section("Spielmechaniken")
-        toggle_row(p2,"pvp","PvP","true")
+        # ── RESSOURCEN ─────────────────────────────────────────────────────
+        total_ram_mb = psutil.virtual_memory().total // (1024*1024)
+        cpu_count    = psutil.cpu_count(logical=True) or 4
+
+        # GPU-Name via wmic
+        gpu_name = "Keine GPU erkannt"
+        try:
+            import subprocess as _sp
+            _r = _sp.run(["wmic","path","win32_VideoController","get","name","/format:list"],
+                         capture_output=True, text=True, timeout=4)
+            for _l in _r.stdout.splitlines():
+                if _l.startswith("Name=") and _l.strip()!="Name=":
+                    gpu_name = _l.split("=",1)[1].strip(); break
+        except Exception: pass
+
+        saved_ram  = cfg.get("ram_mb",  min(2048, total_ram_mb//2))
+        saved_cpu  = cfg.get("cpu_cores", max(1, cpu_count//2))
+        saved_gpu  = cfg.get("gpu_pct", 0)
+
+        ram_var = ctk.IntVar(value=saved_ram)
+        cpu_var = ctk.IntVar(value=saved_cpu)
+        gpu_var = ctk.IntVar(value=saved_gpu)
+
+        pres = section("🖥️  Server-Ressourcen")
+
+        def _warn_label(parent, var_ref, total, unit, threshold=0.5):
+            warn = ctk.CTkLabel(parent, text="", text_color="#ffd600",
+                                font=ctk.CTkFont("Segoe UI",10,"bold"))
+            warn.pack(padx=14,anchor="w")
+            def _upd(*_):
+                pct = var_ref.get()/total if total else 0
+                warn.configure(text=(
+                    f"⚠️  Über {int(threshold*100)}% Ressourcen — kann deinen PC verlangsamen!"
+                    if pct>=threshold else ""))
+            var_ref.trace_add("write",_upd); _upd()
+
+        # RAM Slider
+        ram_row = ctk.CTkFrame(pres, fg_color="transparent"); ram_row.pack(fill="x",padx=14,pady=(14,4))
+        ram_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(ram_row,text="RAM",text_color=TEXT,
+                     font=ctk.CTkFont("Segoe UI",13,"bold"),width=100).grid(row=0,column=0,sticky="w")
+        ram_lbl_var = ctk.StringVar(value=f"{saved_ram} MB / {total_ram_mb} MB")
+        def _ram_upd(v):
+            v = round(float(v)/128)*128
+            ram_var.set(v); ram_lbl_var.set(f"{v} MB  /  {total_ram_mb} MB")
+        ctk.CTkSlider(ram_row, from_=512, to=total_ram_mb, variable=ram_var,
+                      number_of_steps=(total_ram_mb-512)//128,
+                      progress_color=GREEN, button_color=GREEN, command=_ram_upd
+                      ).grid(row=0,column=1,sticky="ew",padx=12)
+        ctk.CTkLabel(ram_row, textvariable=ram_lbl_var, text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11), width=160).grid(row=0,column=2)
+        _warn_label(pres, ram_var, total_ram_mb, "MB")
+        divider(pres)
+
+        # CPU Cores Slider
+        cpu_row = ctk.CTkFrame(pres, fg_color="transparent"); cpu_row.pack(fill="x",padx=14,pady=(10,4))
+        cpu_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(cpu_row,text="CPU-Kerne",text_color=TEXT,
+                     font=ctk.CTkFont("Segoe UI",13,"bold"),width=100).grid(row=0,column=0,sticky="w")
+        cpu_lbl_var = ctk.StringVar(value=f"{saved_cpu} / {cpu_count} Kerne")
+        def _cpu_upd(v):
+            v = max(1, int(float(v))); cpu_var.set(v)
+            cpu_lbl_var.set(f"{v} / {cpu_count} Kern{'e' if v!=1 else ''}")
+        ctk.CTkSlider(cpu_row, from_=1, to=cpu_count, variable=cpu_var,
+                      number_of_steps=cpu_count-1,
+                      progress_color=GREEN, button_color=GREEN, command=_cpu_upd
+                      ).grid(row=0,column=1,sticky="ew",padx=12)
+        ctk.CTkLabel(cpu_row, textvariable=cpu_lbl_var, text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11), width=160).grid(row=0,column=2)
+        _warn_label(pres, cpu_var, cpu_count, "Kerne")
+        divider(pres)
+
+        # GPU Info + Anteil
+        gpu_row = ctk.CTkFrame(pres, fg_color="transparent"); gpu_row.pack(fill="x",padx=14,pady=(10,4))
+        gpu_row.grid_columnconfigure(1, weight=1)
+        gl = ctk.CTkFrame(gpu_row, fg_color="transparent"); gl.grid(row=0,column=0,sticky="w")
+        ctk.CTkLabel(gl,text="GPU-Anteil",text_color=TEXT,
+                     font=ctk.CTkFont("Segoe UI",13,"bold")).pack(anchor="w")
+        ctk.CTkLabel(gl,text=gpu_name,text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",9)).pack(anchor="w")
+        gpu_lbl_var = ctk.StringVar(value=f"{saved_gpu} %")
+        def _gpu_upd(v):
+            v = int(float(v)); gpu_var.set(v); gpu_lbl_var.set(f"{v} %")
+        ctk.CTkSlider(gpu_row, from_=0, to=100, variable=gpu_var,
+                      number_of_steps=100,
+                      progress_color=GREEN, button_color=GREEN, command=_gpu_upd
+                      ).grid(row=0,column=1,sticky="ew",padx=12)
+        ctk.CTkLabel(gpu_row, textvariable=gpu_lbl_var, text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11), width=80).grid(row=0,column=2)
+        _warn_label(pres, gpu_var, 100, "%")
+
+        # ── AUTOMATISIERUNG ─────────────────────────────────────────────────
+        pauto = section("⚙️  Automatisierung")
+
+        # Auto-Start
+        autostart_en  = ctk.BooleanVar(value=cfg.get("autostart_enabled", False))
+        autostart_who = ctk.StringVar(value=cfg.get("autostart_who", "any"))
+        _as_row = ctk.CTkFrame(pauto, fg_color="transparent"); _as_row.pack(fill="x")
+        _as_row.grid_columnconfigure(0, weight=1)
+        _as_lf  = ctk.CTkFrame(_as_row, fg_color="transparent"); _as_lf.grid(row=0,column=0,padx=14,pady=10,sticky="w")
+        ctk.CTkLabel(_as_lf,text="Starte wenn Spieler beitritt",text_color=TEXT,
+                     font=ctk.CTkFont("Segoe UI",13)).pack(anchor="w")
+        ctk.CTkLabel(_as_lf,text="Server startet automatisch sobald ein Spieler verbindet",
+                     text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",9)).pack(anchor="w")
+        _as_ctrl = ctk.CTkFrame(_as_row, fg_color="transparent"); _as_ctrl.grid(row=0,column=1,padx=14)
+        _who_labels = ["Jeder Spieler","Nur Whitelist","Nur OP-Spieler"]
+        _who_values = ["any","whitelist","op"]
+        _who_dvar   = ctk.StringVar(value=_who_labels[_who_values.index(autostart_who.get())] if autostart_who.get() in _who_values else _who_labels[0])
+        def _on_who(val):
+            autostart_who.set(_who_values[_who_labels.index(val)] if val in _who_labels else "any")
+        _who_menu = ctk.CTkOptionMenu(_as_ctrl, variable=_who_dvar, values=_who_labels,
+                                       fg_color=CARD, button_color=BLUE, command=_on_who,
+                                       width=160, font=ctk.CTkFont("Segoe UI",12))
+        _who_menu.pack(side="left", padx=(0,8))
+        def _toggle_who_menu(*_):
+            _who_menu.configure(state="normal" if autostart_en.get() else "disabled")
+        autostart_en.trace_add("write", _toggle_who_menu); _toggle_who_menu()
+        ctk.CTkSwitch(_as_ctrl, variable=autostart_en, text="",
+                      progress_color=GREEN, button_color=TEXT).pack(side="left")
+        divider(pauto)
+
+        # Auto-Stop
+        autostop_en  = ctk.BooleanVar(value=cfg.get("autostop_enabled", False))
+        autostop_min = ctk.IntVar(value=cfg.get("autostop_minutes", 3))
+        _st_row = ctk.CTkFrame(pauto, fg_color="transparent"); _st_row.pack(fill="x")
+        _st_row.grid_columnconfigure(0, weight=1)
+        _st_lf  = ctk.CTkFrame(_st_row, fg_color="transparent"); _st_lf.grid(row=0,column=0,padx=14,pady=10,sticky="w")
+        ctk.CTkLabel(_st_lf,text="Stoppe nach Minuten ohne Spieler",text_color=TEXT,
+                     font=ctk.CTkFont("Segoe UI",13)).pack(anchor="w")
+        ctk.CTkLabel(_st_lf,text="Server stoppt automatisch wenn niemand online ist",
+                     text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",9)).pack(anchor="w")
+        _st_ctrl = ctk.CTkFrame(_st_row, fg_color="transparent"); _st_ctrl.grid(row=0,column=1,padx=14)
+        _stmin_lbl = ctk.CTkLabel(_st_ctrl, textvariable=autostop_min, text_color=TEXT,
+                                   font=ctk.CTkFont("Segoe UI",14,"bold"), width=36)
+        def _st_dec():
+            autostop_min.set(max(1, autostop_min.get()-1))
+        def _st_inc():
+            autostop_min.set(min(60, autostop_min.get()+1))
+        ctk.CTkButton(_st_ctrl,text="−",width=32,height=32,fg_color=CARD,hover_color=BORDER,
+                      font=ctk.CTkFont("Segoe UI",16),corner_radius=6,command=_st_dec).pack(side="left")
+        _stmin_lbl.pack(side="left",padx=6)
+        ctk.CTkButton(_st_ctrl,text="+",width=32,height=32,fg_color=CARD,hover_color=BORDER,
+                      font=ctk.CTkFont("Segoe UI",16),corner_radius=6,command=_st_inc).pack(side="left")
+        ctk.CTkLabel(_st_ctrl,text="min",text_color=TEXT_MUTED,
+                     font=ctk.CTkFont("Segoe UI",11)).pack(side="left",padx=(6,12))
+        ctk.CTkSwitch(_st_ctrl, variable=autostop_en, text="",
+                      progress_color=GREEN, button_color=TEXT).pack(side="left")
+        divider(pauto)
+
+        # Offline-Wartelobby
+        lobby_en = ctk.BooleanVar(value=cfg.get("offline_lobby", False))
+        _lo_row = ctk.CTkFrame(pauto, fg_color="transparent"); _lo_row.pack(fill="x")
+        _lo_row.grid_columnconfigure(0, weight=1)
+        _lo_lf  = ctk.CTkFrame(_lo_row, fg_color="transparent"); _lo_lf.grid(row=0,column=0,padx=14,pady=10,sticky="w")
+        ctk.CTkLabel(_lo_lf,text="Offline-Wartelobby",text_color=TEXT,
+                     font=ctk.CTkFont("Segoe UI",13)).pack(anchor="w")
+        ctk.CTkLabel(_lo_lf,text="Spieler sehen eine Wartelobby wenn Server offline ist",
+                     text_color=TEXT_MUTED,font=ctk.CTkFont("Segoe UI",9)).pack(anchor="w")
+        ctk.CTkSwitch(_lo_row, variable=lobby_en, text="",
+                      progress_color=GREEN, button_color=TEXT).grid(row=0,column=1,padx=14)
+
+        # ── SERVER.PROPERTIES ───────────────────────────────────────────────
+        p1 = section("🌍  Allgemein")
+        drop_row(p1,"difficulty","Schwierigkeitsgrad",
+                 ["peaceful","easy","normal","hard"],
+                 ["Friedlich","Einfach","Normal","Schwer"],"normal")
+        drop_row(p1,"gamemode","Spielmodus",
+                 ["survival","creative","adventure","spectator"],
+                 ["Überleben","Kreativ","Abenteuer","Zuschauer"],"survival")
+        stepper_row(p1,"max-players","Spieler",default="20",min_v=1,max_v=200)
+        stepper_row(p1,"view-distance","Sichtweite (Chunks)",default="10",min_v=3,max_v=32)
+        stepper_row(p1,"player-idle-timeout","Zeitlimit für Inaktivität (Min, 0=aus)",default="0",min_v=0,max_v=999)
+        stepper_row(p1,"spawn-protection","Spawn-Schutz (Blöcke)",default="16",min_v=0,max_v=100)
+
+        p2 = section("⚔️  Spielmechaniken")
+        toggle_row(p2,"pvp","PVP","true")
         toggle_row(p2,"allow-flight","Fliegen","false")
+        toggle_row(p2,"allow-nether","Nether","true")
+        toggle_row(p2,"spawn-monsters","Monster spawnen","true")
         toggle_row(p2,"force-gamemode","Spielmodus erzwingen","false")
-        toggle_row(p2,"enable-command-block","Command Blocks","false")
+        toggle_row(p2,"enable-command-block","Befehlsblöcke","false")
 
-        p3 = section("Zugang")
+        p3 = section("🔐  Zugang")
         toggle_row(p3,"online-mode","Online-Mode  (aus = Cracked)","true")
         toggle_row(p3,"white-list","Whitelist","false")
 
-        p4 = section("Server-Details")
+        p4 = section("📋  Server-Details")
         entry_row(p4,"server-port","Port","25565")
         entry_row(p4,"motd","Beschreibung (MotD)","A Minecraft Server")
         entry_row(p4,"level-name","Weltname","world")
         entry_row(p4,"level-seed","Welt-Seed (leer = zufällig)","")
         entry_row(p4,"resource-pack","Ressourcenpaket URL","")
 
+        # ── SPEICHERN ───────────────────────────────────────────────────────
         def save():
+            # server.properties
             new = dict(props)
             for k,(t,w) in widgets.items():
-                new[k] = ("true" if w.get() else "false") if t=="bool" else w.get()
-            props_file.write_text("\n".join(f"{k}={v}" for k,v in new.items())+"\n",encoding="utf-8")
-            self.cfg["port"] = new.get("server-port","25565")
-            self.cfg["motd"] = new.get("motd","")
+                if t=="bool":  new[k] = "true" if w.get() else "false"
+                elif t=="int": new[k] = str(w.get())
+                else:          new[k] = w.get()
+            props_file.write_text(
+                "\n".join(f"{k}={v}" for k,v in new.items())+"\n", encoding="utf-8")
+            # minehost.json
+            self.cfg["port"]              = new.get("server-port","25565")
+            self.cfg["motd"]              = new.get("motd","")
+            self.cfg["ram_mb"]            = ram_var.get()
+            self.cfg["cpu_cores"]         = cpu_var.get()
+            self.cfg["gpu_pct"]           = gpu_var.get()
+            self.cfg["autostart_enabled"] = autostart_en.get()
+            self.cfg["autostart_who"]     = autostart_who.get()
+            self.cfg["autostop_enabled"]  = autostop_en.get()
+            self.cfg["autostop_minutes"]  = autostop_min.get()
+            self.cfg["offline_lobby"]     = lobby_en.get()
             save_server_cfg(self.server_name, self.cfg)
-            messagebox.showinfo("Gespeichert","server.properties gespeichert.\nServer neu starten, damit Änderungen wirksam werden.")
+            messagebox.showinfo("Gespeichert",
+                "Einstellungen gespeichert.\nServer neu starten, damit Änderungen wirksam werden.")
 
         ctk.CTkButton(self.content, text="Speichern",
                       fg_color=GREEN, hover_color=GREEN_HOV, text_color="#000",
