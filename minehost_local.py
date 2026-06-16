@@ -238,31 +238,45 @@ class PlayitManager:
         self._thread.start()
 
     def _read_output(self):
-        import re, webbrowser
+        import re
+        # Alle bekannten Adress-Muster von playit.gg (verschiedene Versionen)
         addr_patterns = [
-            r"([\w\-]+\.at\.playit\.gg:\d+)",
-            r"([\w\-]+\.playit\.gg:\d+)",
-            r"alloc[^\n]*([\d\.]+:\d+)",
-            r"address[:\s]+([\w\.\-]+:\d+)",
+            r"([\w][\w\-]*\.at\.playit\.gg:\d+)",          # neue Subdomain
+            r"([\w][\w\-]*\.playit\.gg:\d+)",               # alte Subdomain
+            r"tunnel address[:\s]+([\w\.\-]+:\d+)",         # "tunnel address: ..."
+            r"address[:\s]+([\w\.\-]+:\d+)",                # "address: ..."
+            r"connect(?:ing)? (?:to )?(?:at )?([\w\.\-]+:\d+)",  # "connecting to ..."
+            r"allocated.*?([\w\.\-]+\.playit\.gg:\d+)",     # "allocated ..."
+            r"([\w\-]+\.ply\.one:\d+)",                     # ply.one domains
         ]
-        for line in self.proc.stdout:
-            if self.on_log: self.on_log(f"[playit.gg] {line}")
+        _reported_addr = set()   # doppelte Callbacks verhindern
 
-            # Claim-Link
-            if "playit.gg/claim" in line or "playit.gg/account" in line:
-                m = re.search(r"(https://[^\s]+)", line)
+        for raw in self.proc.stdout:
+            line = raw.rstrip()
+            if not line:
+                continue
+            if self.on_log:
+                self.on_log(f"[playit.gg] {line}\n")
+
+            low = line.lower()
+
+            # ── Claim-Link (Erst-Registrierung) ───────────────────────────
+            if any(x in low for x in ("playit.gg/claim", "playit.gg/account",
+                                       "claim your", "visit:", "https://playit")):
+                m = re.search(r"(https://[^\s\]>\"]+)", line, re.IGNORECASE)
                 if m and self.on_claim:
-                    self.on_claim(m.group(1))
+                    self.on_claim(m.group(1).rstrip("."))
 
-            # Tunnel-Adresse
+            # ── Tunnel-Adresse ─────────────────────────────────────────────
             for pat in addr_patterns:
                 m = re.search(pat, line, re.IGNORECASE)
                 if m:
                     addr = m.group(1)
-                    if "playit" in addr or ":" in addr:
+                    if addr not in _reported_addr:
+                        _reported_addr.add(addr)
                         if self.on_address:
                             self.on_address(addr)
-                        break
+                    break
 
     def stop(self):
         if self.proc:
@@ -454,16 +468,11 @@ class CreateServerWindow(ctk.CTkToplevel):
         self._field_lbl(sec1, "Server-Name")
         self.e_name = self._entry(sec1, "Mein Server")
 
-        self._field_lbl(sec1, "Server-Adresse  (wird automatisch generiert)")
-        addr_row = ctk.CTkFrame(sec1, fg_color="transparent")
-        addr_row.pack(padx=18, pady=(2,12), fill="x")
-        addr_row.grid_columnconfigure(0, weight=1)
-        self.e_addr = ctk.CTkEntry(addr_row, fg_color=CARD, border_color=BORDER,
-                                    text_color=TEXT, font=ctk.CTkFont("Segoe UI",13))
-        self.e_addr.grid(row=0, column=0, sticky="ew", padx=(0,8))
-        ctk.CTkLabel(addr_row, text=".minehost.local",
-                     text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",12)
-                     ).grid(row=0, column=1)
+        self._field_lbl(sec1, "Server-Adresse  (playit.gg — wird beim ersten Start generiert)")
+        ctk.CTkLabel(sec1,
+                     text="  Die echte Domain wird beim ersten Serverstart automatisch von playit.gg vergeben.",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont("Segoe UI",10),
+                     anchor="w").pack(padx=18, pady=(0,12), fill="x")
         ctk.CTkLabel(sec1, text="Port", anchor="w", text_color=TEXT_MUTED,
                      font=ctk.CTkFont("Segoe UI",11)).pack(padx=18, fill="x")
         self.e_port = self._entry(sec1, "25565", default="25565")
@@ -552,10 +561,7 @@ class CreateServerWindow(ctk.CTkToplevel):
         return e
 
     def _auto_addr(self, _=None):
-        name = self.e_name.get().strip().replace(" ","-")
-        if name:
-            self.e_addr.delete(0,"end")
-            self.e_addr.insert(0, f"{name}-{rnd_suffix(4)}")
+        pass   # Adresse kommt von playit.gg, nicht mehr hier generiert
 
     def _pick(self, name):
         self._sel_type = name
@@ -572,7 +578,7 @@ class CreateServerWindow(ctk.CTkToplevel):
             self.prog_lbl.configure(text="Bitte einen Server-Namen eingeben!", text_color=RED)
             return
 
-        addr     = self.e_addr.get().strip() or f"{raw_name.replace(' ','-')}-{rnd_suffix(4)}"
+        addr     = ""   # playit.gg vergibt die echte Adresse beim ersten Start
         port     = self.e_port.get().strip() or "25565"
         players  = self.e_players.get().strip() or "20"
         motd     = self.e_motd.get().strip() or "A Minecraft Server"
@@ -635,7 +641,7 @@ class CreateServerWindow(ctk.CTkToplevel):
                 "type":        tag,
                 "type_label":  srv_type,
                 "port":        port,
-                "address":     f"{addr}.minehost.local",
+                "address":     "",   # wird von playit.gg beim ersten Start gesetzt
                 "max_players": players,
                 "motd":        motd,
                 "dir":         str(srv_dir),
@@ -855,15 +861,23 @@ class MainApp(ctk.CTk):
         head.pack(pady=(24,0))
         ctk.CTkLabel(head, text=cfg.get("name","Server"),
                      font=ctk.CTkFont("Segoe UI",26,"bold"), text_color=TEXT).pack()
+        # Adresse nur anzeigen wenn Tunnel aktiv ist
+        _hdr_addr = getattr(self, "_playit_addr", None)
         addr_row = ctk.CTkFrame(head, fg_color="transparent")
         addr_row.pack(pady=(4,0))
-        ctk.CTkLabel(addr_row, text=cfg.get("address","localhost"),
-                     font=ctk.CTkFont("Segoe UI",13), text_color=TEXT_MUTED).pack(side="left", padx=(0,10))
-        ctk.CTkButton(addr_row, text="Verbinden",
-                      fg_color=CARD, hover_color=BORDER, text_color=TEXT,
-                      font=ctk.CTkFont("Segoe UI",11), height=26, width=80, corner_radius=4,
-                      command=lambda: self.clipboard_append(cfg.get("address","")) or self.update()
-                      ).pack(side="left")
+        if _hdr_addr:
+            ctk.CTkLabel(addr_row, text=_hdr_addr,
+                         font=ctk.CTkFont("Segoe UI",13), text_color=TEXT_MUTED).pack(side="left", padx=(0,10))
+            ctk.CTkButton(addr_row, text="Kopieren",
+                          fg_color=CARD, hover_color=BORDER, text_color=TEXT,
+                          font=ctk.CTkFont("Segoe UI",11), height=26, width=80, corner_radius=4,
+                          command=lambda a=_hdr_addr: (self.clipboard_clear(), self.clipboard_append(a))
+                          ).pack(side="left")
+        else:
+            _hdr_state = getattr(self, "_server_state", "offline")
+            _hdr_txt   = "Tunnel inaktiv" if _hdr_state == "offline" else "Tunnel verbindet…"
+            ctk.CTkLabel(addr_row, text=_hdr_txt,
+                         font=ctk.CTkFont("Segoe UI",13), text_color=TEXT_MUTED).pack()
 
         # ── Status-Banner ──
         # Zustände: "offline" | "starting" | "online" | "error"
@@ -897,20 +911,24 @@ class MainApp(ctk.CTk):
             self._start_btn.pack()
 
         elif state == "starting":
-            # Ladekreis + "Laden"-Text
-            loader_frame = ctk.CTkFrame(btn_row, fg_color="transparent")
-            loader_frame.pack()
-            spinner = ctk.CTkProgressBar(loader_frame, mode="indeterminate",
-                                          width=180, height=6,
-                                          fg_color=CARD, progress_color="#f39c12")
-            spinner.pack(pady=(0,8))
-            spinner.start()
-            ctk.CTkLabel(loader_frame, text="Laden",
-                         font=ctk.CTkFont("Segoe UI",22,"bold"),
-                         text_color="#f39c12").pack()
-            ctk.CTkLabel(loader_frame, text="Server wird gestartet…",
-                         font=ctk.CTkFont("Segoe UI",12),
-                         text_color=TEXT_MUTED).pack(pady=(2,0))
+            # Animierter Button (deaktiviert) mit drehendem Ladekreis
+            _spin_frames = ["⟳ Laden…", "↻ Laden…", "⟳ Laden…", "↺ Laden…"]
+            _spin_ref    = [0]
+            self._start_btn = ctk.CTkButton(
+                btn_row,
+                text=_spin_frames[0],
+                fg_color="#555", hover_color="#555", text_color="#aaa",
+                font=ctk.CTkFont("Segoe UI",18,"bold"),
+                width=180, height=56, corner_radius=28,
+                state="disabled", command=lambda: None)
+            self._start_btn.pack()
+            def _spin_btn():
+                if getattr(self, "_server_state", "") == "starting":
+                    _spin_ref[0] = (_spin_ref[0]+1) % len(_spin_frames)
+                    try: self._start_btn.configure(text=_spin_frames[_spin_ref[0]])
+                    except: return
+                    self.after(500, _spin_btn)
+            self.after(500, _spin_btn)
 
         elif state == "online":
             self._start_btn = ctk.CTkButton(btn_row, text="Stoppen",
